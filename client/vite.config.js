@@ -6,6 +6,8 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    // Cursor Cloud / VM preview hosts (*.cursorvm.com) must be allowed
+    allowedHosts: true,
     proxy: {
       "/api": {
         target: "http://localhost:3001",
