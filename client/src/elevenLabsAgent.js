@@ -57,7 +57,6 @@ export class ElevenLabsVoiceAgent {
     try {
       let token = this.session?.token;
       if (!token) {
-        const { createRealtimeSession } = await import("./api.js");
         this.session = await createRealtimeSession();
         token = this.session.token;
       }
