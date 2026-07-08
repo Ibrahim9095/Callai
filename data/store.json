@@ -1,0 +1,131 @@
+{
+  "store": {
+    "name": "CallAI Market",
+    "phone": "+994 12 555 00 00",
+    "address": "Bakı, Nəsimi rayonu, 28 May küç. 12",
+    "hours": "Hər gün 09:00–22:00",
+    "currency": "AZN",
+    "deliveryFee": 3,
+    "freeDeliveryFrom": 50,
+    "deliveryEtaMinutes": [40, 90]
+  },
+  "categories": [
+    "Elektronika",
+    "Ev əşyaları",
+    "Geyim",
+    "Qida",
+    "Aksesuar"
+  ],
+  "products": [
+    {
+      "id": "p-iphone15",
+      "name": "iPhone 15 128GB",
+      "category": "Elektronika",
+      "price": 1899,
+      "stock": 7,
+      "colors": ["Qara", "Mavi", "Yaşıl"],
+      "description": "A16 çip, 48MP kamera, USB-C. Rəsmi zəmanət 1 il."
+    },
+    {
+      "id": "p-airpods",
+      "name": "AirPods Pro 2",
+      "category": "Elektronika",
+      "price": 549,
+      "stock": 15,
+      "colors": ["Ağ"],
+      "description": "Aktiv səs-küy azaltma, USB-C qutu, məkan audio."
+    },
+    {
+      "id": "p-samsung-s24",
+      "name": "Samsung Galaxy S24",
+      "category": "Elektronika",
+      "price": 1599,
+      "stock": 4,
+      "colors": ["Qara", "Bənövşəyi"],
+      "description": "AI kamera, 120Hz ekran, 256GB yaddaş."
+    },
+    {
+      "id": "p-dyson",
+      "name": "Dyson V15 Detect",
+      "category": "Ev əşyaları",
+      "price": 1299,
+      "stock": 3,
+      "colors": ["Sarı/Nikel"],
+      "description": "Lazer toz aşkarlama, güclü simsiz tozsoran."
+    },
+    {
+      "id": "p-kettle",
+      "name": "Philips Elektrik Çaydan",
+      "category": "Ev əşyaları",
+      "price": 79,
+      "stock": 22,
+      "colors": ["Ağ", "Qara"],
+      "description": "1.7L, avtomatik söndürmə, paslanmayan polad."
+    },
+    {
+      "id": "p-hoodie",
+      "name": "Unisex Hoodie",
+      "category": "Geyim",
+      "price": 65,
+      "stock": 30,
+      "colors": ["Qara", "Boz", "Bej"],
+      "sizes": ["S", "M", "L", "XL"],
+      "description": "Yumşaq pambıq qarışıq, rahat kroj."
+    },
+    {
+      "id": "p-sneakers",
+      "name": "Nike Air Max Runner",
+      "category": "Geyim",
+      "price": 189,
+      "stock": 12,
+      "colors": ["Ağ/Qara", "Göy"],
+      "sizes": ["40", "41", "42", "43", "44"],
+      "description": "Yüngül, gündəlik idman ayaqqabısı."
+    },
+    {
+      "id": "p-olive-oil",
+      "name": "Zeytun yağı 1L",
+      "category": "Qida",
+      "price": 28,
+      "stock": 40,
+      "description": "Extra virgin, İtaliya istehsalı."
+    },
+    {
+      "id": "p-coffee",
+      "name": "Arabica Qəhvə 500g",
+      "category": "Qida",
+      "price": 22,
+      "stock": 35,
+      "description": "Orta qovurma, zəngin aroma."
+    },
+    {
+      "id": "p-watch",
+      "name": "Smart Watch X3",
+      "category": "Aksesuar",
+      "price": 149,
+      "stock": 18,
+      "colors": ["Qara", "Gümüşü"],
+      "description": "Ürək ritmi, SpO2, 7 gün batareya."
+    },
+    {
+      "id": "p-bag",
+      "name": "Dəri Çanta Classic",
+      "category": "Aksesuar",
+      "price": 210,
+      "stock": 6,
+      "colors": ["Qəhvəyi", "Qara"],
+      "description": "Həqiqi dəri, əl və çiyin qayışı."
+    },
+    {
+      "id": "p-earbuds",
+      "name": "Wireless Earbuds Mini",
+      "category": "Elektronika",
+      "price": 59,
+      "stock": 50,
+      "colors": ["Ağ", "Qara"],
+      "description": "Bluetooth 5.3, 24 saat ümumi batareya."
+    }
+  ],
+  "orders": [],
+  "tickets": []
+}
