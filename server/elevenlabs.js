@@ -8,10 +8,25 @@ const CACHE_PATH = path.join(__dirname, "..", "data", "elevenlabs-agent.json");
 
 const ELEVEN_API = "https://api.elevenlabs.io/v1";
 const ELEVEN_KEY = () => process.env.ELEVENLABS_API_KEY || "";
-const VOICE_ID = () => process.env.ELEVENLABS_VOICE_ID || "hpp4J3VqNfWAUOO0d1Us"; // Bella — warm professional
+// Fili — warm Istanbul female (closest available phonetics for AZ on free/starter plans)
+const VOICE_ID = () => process.env.ELEVENLABS_VOICE_ID || "FDs1ZX5J4e4f2c2erxtW";
 const LLM = () => process.env.ELEVENLABS_LLM || "gemini-2.5-flash";
 // eleven_v3_conversational is the only Agents TTS that supports Azerbaijani (az)
 const TTS_MODEL = () => process.env.ELEVENLABS_TTS_MODEL || "eleven_v3_conversational";
+const PRONUNCIATION_DICTS = () => {
+  const raw = process.env.ELEVENLABS_PRONUNCIATION_DICTS;
+  if (raw) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      /* fall through */
+    }
+  }
+  return [
+    { pronunciation_dictionary_id: "rCWIsh6cYwgR2B88Hpd2", version_id: "7U8dBrhdNlgAMgmkjxHH" },
+    { pronunciation_dictionary_id: "ggRxGFUnujM55sB47Nm0", version_id: "nmRvAkwN0zgJSeNxdb1S" },
+  ];
+};
 
 function headers() {
   return {
@@ -80,17 +95,19 @@ function buildAgentBody() {
         voice_id: VOICE_ID(),
         model_id: TTS_MODEL(),
         expressive_mode: true,
-        stability: 0.35,
-        similarity_boost: 0.75,
-        speed: 0.95,
+        stability: 0.4,
+        similarity_boost: 0.8,
+        speed: 0.92,
         optimize_streaming_latency: 2,
         agent_output_audio_format: "pcm_16000",
+        pronunciation_dictionary_locators: PRONUNCIATION_DICTS(),
         suggested_audio_tags: [
           { tag: "warmly", description: "Mehriban salam və təşəkkür" },
-          { tag: "friendly", description: "Gündəlik söhbət tonu" },
+          { tag: "friendly", description: "Gündəlik Bakı söhbət tonu" },
           { tag: "thinking", description: "Stok/qiymətə baxarkən" },
+          { tag: "confident", description: "Tövsiyə və bağlama" },
           { tag: "sighs", description: "Üzr və ya gecikmə" },
-          { tag: "excited", description: "Yaxşı təklif və ya uğurlu sifariş" },
+          { tag: "excited", description: "Uğurlu sifariş" },
         ],
       },
       asr: {
@@ -101,22 +118,28 @@ function buildAgentBody() {
           "CallAI",
           "Leyla",
           "Bakı",
+          "Nəsimi",
           "manat",
           "sifariş",
           "çatdırılma",
           "iPhone",
           "AirPods",
+          "Samsung",
           "hoodie",
           "nağd",
           "kart",
+          "bilərəm",
+          "əlbəttə",
+          "xahiş",
         ],
       },
       turn: {
-        turn_timeout: 7,
+        turn_timeout: 8,
         silence_end_call_timeout: -1,
-        turn_eagerness: "normal",
+        turn_eagerness: "patient",
         speculative_turn: true,
         turn_model: "turn_v3",
+        spelling_patience: "auto",
       },
       conversation: {
         text_only: false,
