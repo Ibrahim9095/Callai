@@ -1,8 +1,8 @@
 import { createRealtimeSession, runTool } from "./api.js";
 
 /**
- * Low-latency voice via WebRTC → OpenAI Realtime.
- * Mic audio streams directly; tool calls are executed locally against our store API.
+ * Low-latency voice via WebRTC → OpenAI Realtime (GA).
+ * Mic audio streams directly; tool calls hit our local store/operator API.
  */
 export class VoiceAgent {
   constructor({ onStatus, onTranscript, onTool, onError, onRemoteStream } = {}) {
@@ -17,6 +17,7 @@ export class VoiceAgent {
     this.localStream = null;
     this.remoteAudio = null;
     this.started = false;
+    this.greeted = false;
   }
 
   async start() {
@@ -25,7 +26,7 @@ export class VoiceAgent {
 
     try {
       const session = await createRealtimeSession();
-      const ephemeralKey = session.client_secret?.value;
+      const ephemeralKey = session.value || session.client_secret?.value;
       if (!ephemeralKey) {
         throw new Error("Ephemeral token alınmadı. OPENAI_API_KEY yoxlayın.");
       }
@@ -66,8 +67,7 @@ export class VoiceAgent {
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
 
-      const model = session.model || "gpt-4o-realtime-preview";
-      const sdpResponse = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`, {
+      const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
         method: "POST",
         headers: {
           Authorization: `Bearer ${ephemeralKey}`,
@@ -102,27 +102,38 @@ export class VoiceAgent {
   }
 
   #configureSession() {
-    // Reinforce low-latency VAD + transcription after connect
+    // Keep VAD snappy; tools/instructions already come from client_secret session
     this.#send({
       type: "session.update",
       session: {
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.5,
-          prefix_padding_ms: 250,
-          silence_duration_ms: 450,
-          create_response: true,
+        type: "realtime",
+        audio: {
+          input: {
+            turn_detection: {
+              type: "server_vad",
+              threshold: 0.5,
+              prefix_padding_ms: 250,
+              silence_duration_ms: 450,
+              create_response: true,
+              interrupt_response: true,
+            },
+            transcription: {
+              model: "gpt-4o-mini-transcribe",
+              language: "az",
+            },
+          },
         },
-        input_audio_transcription: { model: "whisper-1" },
       },
     });
   }
 
   #greet() {
+    if (this.greeted) return;
+    this.greeted = true;
     this.#send({
       type: "response.create",
       response: {
-        modalities: ["audio", "text"],
+        output_modalities: ["audio"],
         instructions:
           "Qısa və təbii salamla. De ki, sən CallAI Market-dən Leylasan və satış/operator köməyi üçün hazırsan. Bir cümləlik sual ver: necə kömək edə bilərsən?",
       },
@@ -138,6 +149,9 @@ export class VoiceAgent {
     }
 
     switch (event.type) {
+      case "session.created":
+      case "session.updated":
+        break;
       case "input_audio_buffer.speech_started":
         this.onStatus("listening");
         break;
@@ -155,6 +169,7 @@ export class VoiceAgent {
           this.onTranscript({ role: "user", text: event.transcript.trim() });
         }
         break;
+      case "response.output_audio_transcript.done":
       case "response.audio_transcript.done":
         if (event.transcript) {
           this.onTranscript({ role: "assistant", text: event.transcript.trim() });
@@ -212,6 +227,7 @@ export class VoiceAgent {
 
   async stop() {
     this.started = false;
+    this.greeted = false;
     try {
       this.dc?.close();
     } catch {

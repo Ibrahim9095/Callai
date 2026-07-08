@@ -10,11 +10,41 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-4o-realtime-preview";
+const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime";
 const VOICE = process.env.AGENT_VOICE || "coral";
 
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
+
+function buildSessionConfig() {
+  return {
+    type: "realtime",
+    model: REALTIME_MODEL,
+    instructions: AGENT_INSTRUCTIONS,
+    output_modalities: ["audio"],
+    tools: REALTIME_TOOLS,
+    tool_choice: "auto",
+    audio: {
+      input: {
+        transcription: {
+          model: "gpt-4o-mini-transcribe",
+          language: "az",
+        },
+        turn_detection: {
+          type: "server_vad",
+          threshold: 0.5,
+          prefix_padding_ms: 250,
+          silence_duration_ms: 450,
+          create_response: true,
+          interrupt_response: true,
+        },
+      },
+      output: {
+        voice: VOICE,
+      },
+    },
+  };
+}
 
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -45,7 +75,7 @@ app.get("/api/orders/:id", (req, res) => {
 });
 
 /**
- * Ephemeral token for browser WebRTC → OpenAI Realtime.
+ * Ephemeral client secret for browser WebRTC → OpenAI Realtime (GA).
  * Keeps the secret API key on the server.
  */
 app.post("/api/realtime/session", async (_req, res) => {
@@ -56,47 +86,39 @@ app.post("/api/realtime/session", async (_req, res) => {
   }
 
   try {
-    const response = await fetch("https://api.openai.com/v1/realtime/sessions", {
+    const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
+        "OpenAI-Safety-Identifier": "callai-store-operator",
       },
       body: JSON.stringify({
-        model: REALTIME_MODEL,
-        voice: VOICE,
-        modalities: ["audio", "text"],
-        instructions: AGENT_INSTRUCTIONS,
-        tools: REALTIME_TOOLS,
-        tool_choice: "auto",
-        input_audio_transcription: {
-          model: "whisper-1",
+        expires_after: {
+          anchor: "created_at",
+          seconds: 600,
         },
-        turn_detection: {
-          type: "server_vad",
-          threshold: 0.5,
-          prefix_padding_ms: 250,
-          silence_duration_ms: 450,
-          create_response: true,
-        },
-        temperature: 0.7,
+        session: buildSessionConfig(),
       }),
     });
 
     const data = await response.json();
     if (!response.ok) {
-      console.error("Realtime session error:", data);
+      console.error("Realtime client_secrets error:", data);
       return res.status(response.status).json({
         error: data?.error?.message || "Realtime session yaradıla bilmədi",
         details: data,
       });
     }
 
+    // Normalize for the client: GA returns { value, expires_at, session }
     res.json({
-      client_secret: data.client_secret,
-      model: data.model || REALTIME_MODEL,
-      voice: VOICE,
+      value: data.value,
+      client_secret: { value: data.value },
+      model: data.session?.model || REALTIME_MODEL,
+      voice: data.session?.audio?.output?.voice || VOICE,
       expires_at: data.expires_at,
+      session: data.session,
     });
   } catch (err) {
     console.error(err);

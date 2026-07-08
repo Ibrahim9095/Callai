@@ -64,7 +64,7 @@ Express /api/tools/*  →  data/store.json
 | Dəyişən | İzah |
 |---------|------|
 | `OPENAI_API_KEY` | Mütləq |
-| `OPENAI_REALTIME_MODEL` | default: `gpt-4o-realtime-preview` |
+| `OPENAI_REALTIME_MODEL` | default: `gpt-realtime` |
 | `AGENT_VOICE` | default: `coral` (digər: `alloy`, `verse`, `ballad`…) |
 | `PORT` | default: `3001` |
 
