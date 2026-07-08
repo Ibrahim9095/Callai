@@ -1,14 +1,14 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { AGENT_INSTRUCTIONS, REALTIME_TOOLS } from "./agent.js";
+import { AGENT_INSTRUCTIONS, FIRST_MESSAGE_AZ, REALTIME_TOOLS } from "./agent.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CACHE_PATH = path.join(__dirname, "..", "data", "elevenlabs-agent.json");
 
 const ELEVEN_API = "https://api.elevenlabs.io/v1";
 const ELEVEN_KEY = () => process.env.ELEVENLABS_API_KEY || "";
-const VOICE_ID = () => process.env.ELEVENLABS_VOICE_ID || "cgSgspJ2msm6clMCkdW9"; // Jessica — warm conversational
+const VOICE_ID = () => process.env.ELEVENLABS_VOICE_ID || "hpp4J3VqNfWAUOO0d1Us"; // Bella — warm professional
 const LLM = () => process.env.ELEVENLABS_LLM || "gemini-2.5-flash";
 // eleven_v3_conversational is the only Agents TTS that supports Azerbaijani (az)
 const TTS_MODEL = () => process.env.ELEVENLABS_TTS_MODEL || "eleven_v3_conversational";
@@ -67,31 +67,56 @@ function buildAgentBody() {
     name: "CallAI Leyla",
     conversation_config: {
       agent: {
-        first_message:
-          "Salam, CallAI Market-dən Leyla. Buyurun, necə kömək edə bilim?",
+        first_message: FIRST_MESSAGE_AZ,
         language: "az",
         prompt: {
           prompt: AGENT_INSTRUCTIONS,
           llm: LLM(),
-          temperature: 0.7,
+          temperature: 0.75,
           tools: toElevenClientTools(),
         },
       },
       tts: {
         voice_id: VOICE_ID(),
         model_id: TTS_MODEL(),
-        // Plan may block expressive TTS; keep false for az + v3_conversational
-        expressive_mode: false,
+        expressive_mode: true,
+        stability: 0.35,
+        similarity_boost: 0.75,
+        speed: 0.95,
+        optimize_streaming_latency: 2,
         agent_output_audio_format: "pcm_16000",
+        suggested_audio_tags: [
+          { tag: "warmly", description: "Mehriban salam və təşəkkür" },
+          { tag: "friendly", description: "Gündəlik söhbət tonu" },
+          { tag: "thinking", description: "Stok/qiymətə baxarkən" },
+          { tag: "sighs", description: "Üzr və ya gecikmə" },
+          { tag: "excited", description: "Yaxşı təklif və ya uğurlu sifariş" },
+        ],
       },
       asr: {
         quality: "high",
         provider: "scribe_realtime",
         user_input_audio_format: "pcm_16000",
+        keywords: [
+          "CallAI",
+          "Leyla",
+          "Bakı",
+          "manat",
+          "sifariş",
+          "çatdırılma",
+          "iPhone",
+          "AirPods",
+          "hoodie",
+          "nağd",
+          "kart",
+        ],
       },
       turn: {
         turn_timeout: 7,
         silence_end_call_timeout: -1,
+        turn_eagerness: "normal",
+        speculative_turn: true,
+        turn_model: "turn_v3",
       },
       conversation: {
         text_only: false,
@@ -120,6 +145,15 @@ function writeCache(data) {
   fs.writeFileSync(CACHE_PATH, JSON.stringify(data, null, 2), "utf8");
 }
 
+function formatError(data) {
+  const detail = data?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => `${(d.loc || []).join(".")}: ${d.msg}`).join(" | ");
+  }
+  return detail?.message || JSON.stringify(data);
+}
+
 /**
  * Create or update the ElevenLabs Conversational agent.
  * Returns agent_id. Cached in data/elevenlabs-agent.json.
@@ -135,23 +169,23 @@ export async function ensureElevenAgent({ force = false } = {}) {
   const body = buildAgentBody();
 
   if (agentId && !force) {
-    // Patch existing agent so prompt/tools stay in sync
     const patchRes = await fetch(`${ELEVEN_API}/convai/agents/${agentId}`, {
       method: "PATCH",
       headers: headers(),
       body: JSON.stringify(body),
     });
     if (patchRes.ok) {
-      const data = await patchRes.json().catch(() => ({}));
+      await patchRes.json().catch(() => ({}));
       writeCache({
         agent_id: agentId,
         updated_at: new Date().toISOString(),
         voice_id: VOICE_ID(),
         llm: LLM(),
+        tts_model: TTS_MODEL(),
+        language: "az",
       });
-      return { agent_id: agentId, updated: true, data };
+      return { agent_id: agentId, updated: true };
     }
-    // If patch fails (deleted agent), fall through to create
     console.warn("ElevenLabs agent patch failed, creating new:", await patchRes.text());
   }
 
@@ -162,14 +196,7 @@ export async function ensureElevenAgent({ force = false } = {}) {
   });
   const data = await createRes.json();
   if (!createRes.ok) {
-    const detail = data?.detail;
-    const msg =
-      typeof detail === "string"
-        ? detail
-        : Array.isArray(detail)
-          ? detail.map((d) => `${(d.loc || []).join(".")}: ${d.msg}`).join(" | ")
-          : detail?.message || JSON.stringify(data);
-    throw new Error(msg || "Agent yaradıla bilmədi");
+    throw new Error(formatError(data) || "Agent yaradıla bilmədi");
   }
 
   const newId = data.agent_id;
@@ -178,6 +205,8 @@ export async function ensureElevenAgent({ force = false } = {}) {
     created_at: new Date().toISOString(),
     voice_id: VOICE_ID(),
     llm: LLM(),
+    tts_model: TTS_MODEL(),
+    language: "az",
   });
   return { agent_id: newId, created: true, data };
 }
@@ -193,7 +222,7 @@ export async function getConversationToken(agentId) {
   );
   const data = await res.json();
   if (!res.ok) {
-    throw new Error(data?.detail?.message || data?.detail || "Conversation token alınmadı");
+    throw new Error(formatError(data) || "Conversation token alınmadı");
   }
   return { token: data.token, agent_id: id };
 }
@@ -210,5 +239,6 @@ export function getElevenStatus() {
     voice_id: VOICE_ID(),
     llm: LLM(),
     tts_model: TTS_MODEL(),
+    language: "az",
   };
 }
