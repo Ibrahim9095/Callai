@@ -4,12 +4,12 @@ import { VoiceAgent } from "./voiceAgent.js";
 
 const STATUS_LABELS = {
   idle: "Hazır",
-  connecting: "Qoşulur…",
-  live: "Canlı — danışın",
-  listening: "Sizi dinləyir…",
-  thinking: "Düşünür…",
+  connecting: "Zəng bağlanır…",
+  live: "Xəttdəsiniz — danışın",
+  listening: "Dinləyir…",
+  thinking: "Bir saniyə…",
   speaking: "Leyla danışır…",
-  tool: "Mağaza yoxlanılır…",
+  tool: "Yoxlayır…",
   error: "Xəta",
 };
 
@@ -137,10 +137,10 @@ export default function App() {
       <main className="hero">
         <section className="hero-copy">
           <p className="brand-hero">CallAI</p>
-          <h1>Mağazanızın səsli satıcısı və operatoru</h1>
+          <h1>Mağaza satışı və operator xətti</h1>
           <p className="lede">
-            Leyla ilə insan kimi danışın — məhsul seçin, sifariş verin, status öyrənin. WebRTC ilə az
-            gecikməli canlı səs.
+            Leyla ilə telefon kimi danışın — məhsul seçin, sifariş verin, status öyrənin. Canlı səs,
+            az gözləmə.
           </p>
 
           <div className="cta-row">
@@ -171,7 +171,7 @@ export default function App() {
             </div>
           </div>
           <p className="status-line">{STATUS_LABELS[status] || status}</p>
-          <p className="agent-name">Leyla · satış & operator</p>
+          <p className="agent-name">Leyla · CallAI Market</p>
         </section>
       </main>
 
@@ -222,7 +222,7 @@ export default function App() {
       </section>
 
       <footer className="foot">
-        <p>OpenAI Realtime · WebRTC · Azərbaycan dili · nümunə kataloq ilə işləyir</p>
+        <p>CallAI Market · Azərbaycan dili · satış və operator xətti</p>
       </footer>
     </div>
   );

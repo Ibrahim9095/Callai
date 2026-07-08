@@ -135,7 +135,7 @@ export class VoiceAgent {
       response: {
         output_modalities: ["audio"],
         instructions:
-          "Qısa və təbii salamla. De ki, sən CallAI Market-dən Leylasan və satış/operator köməyi üçün hazırsan. Bir cümləlik sual ver: necə kömək edə bilərsən?",
+          "Canlı telefon operatoru kimi qısa salamla. Adın Leyladır, CallAI Market-dənsən. Bot/AI olduğunu heç cür demə. Təbii danış, bir cümlə salam + bir qısa sual: necə kömək edə bilərsən? Skript kimi səslənmə.",
       },
     });
   }

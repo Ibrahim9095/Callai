@@ -64,8 +64,8 @@ Express /api/tools/*  →  data/store.json
 | Dəyişən | İzah |
 |---------|------|
 | `OPENAI_API_KEY` | Mütləq |
-| `OPENAI_REALTIME_MODEL` | default: `gpt-realtime` |
-| `AGENT_VOICE` | default: `coral` (digər: `alloy`, `verse`, `ballad`…) |
+| `OPENAI_REALTIME_MODEL` | default: `gpt-realtime-mini` (ucuz; keyfiyyət üçün `gpt-realtime`) |
+| `AGENT_VOICE` | default: `marin` (digər: `coral`, `cedar`, `alloy`…) |
 | `PORT` | default: `3001` |
 
 Kataloqu dəyişmək üçün `data/store.json` redaktə edin.
