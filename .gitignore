@@ -3,5 +3,4 @@ dist
 .env
 server/.env
 .DS_Store
-*.log
-client/dist
+data/elevenlabs-agent.json

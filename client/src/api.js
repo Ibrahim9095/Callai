@@ -9,6 +9,11 @@ export async function createRealtimeSession() {
   return data;
 }
 
+/** Alias — same endpoint, provider decided server-side */
+export async function createElevenLabsSession() {
+  return createRealtimeSession();
+}
+
 export async function runTool(name, args = {}) {
   const res = await fetch(`${API_BASE}/api/tools/${name}`, {
     method: "POST",

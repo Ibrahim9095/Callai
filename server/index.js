@@ -5,6 +5,12 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { AGENT_INSTRUCTIONS, REALTIME_TOOLS } from "./agent.js";
 import { toolHandlers, getStoreInfo, searchProducts, getOrderStatus } from "./store.js";
+import {
+  ensureElevenAgent,
+  getConversationToken,
+  elevenConfigured,
+  getElevenStatus,
+} from "./elevenlabs.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -13,10 +19,24 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || "gpt-realtime-mini";
 const VOICE = process.env.AGENT_VOICE || "marin";
 
+/**
+ * Provider selection:
+ * - VOICE_PROVIDER=elevenlabs|openai|auto (default auto)
+ * - auto → ElevenLabs if key present, else OpenAI
+ */
+function resolveProvider() {
+  const pref = (process.env.VOICE_PROVIDER || "auto").toLowerCase();
+  if (pref === "elevenlabs") return elevenConfigured() ? "elevenlabs" : null;
+  if (pref === "openai") return OPENAI_API_KEY ? "openai" : null;
+  if (elevenConfigured()) return "elevenlabs";
+  if (OPENAI_API_KEY) return "openai";
+  return null;
+}
+
 app.use(cors());
 app.use(express.json({ limit: "1mb" }));
 
-function buildSessionConfig() {
+function buildOpenAISessionConfig() {
   return {
     type: "realtime",
     model: REALTIME_MODEL,
@@ -47,11 +67,15 @@ function buildSessionConfig() {
 }
 
 app.get("/api/health", (_req, res) => {
+  const provider = resolveProvider();
   res.json({
     ok: true,
+    provider,
     hasApiKey: Boolean(OPENAI_API_KEY),
-    model: REALTIME_MODEL,
-    voice: VOICE,
+    hasElevenLabs: elevenConfigured(),
+    model: provider === "elevenlabs" ? getElevenStatus().llm : REALTIME_MODEL,
+    voice: provider === "elevenlabs" ? getElevenStatus().voice_id : VOICE,
+    eleven: getElevenStatus(),
     store: getStoreInfo().name,
   });
 });
@@ -75,17 +99,31 @@ app.get("/api/orders/:id", (req, res) => {
 });
 
 /**
- * Ephemeral client secret for browser WebRTC → OpenAI Realtime (GA).
- * Keeps the secret API key on the server.
+ * Unified session endpoint — returns provider-specific credentials.
  */
 app.post("/api/realtime/session", async (_req, res) => {
-  if (!OPENAI_API_KEY) {
+  const provider = resolveProvider();
+  if (!provider) {
     return res.status(500).json({
-      error: "OPENAI_API_KEY təyin edilməyib. server/.env faylına açar əlavə edin.",
+      error:
+        "Heç bir səs API açarı yoxdur. ELEVENLABS_API_KEY (tövsiyə) və ya OPENAI_API_KEY əlavə edin.",
     });
   }
 
   try {
+    if (provider === "elevenlabs") {
+      const { agent_id } = await ensureElevenAgent();
+      const { token } = await getConversationToken(agent_id);
+      return res.json({
+        provider: "elevenlabs",
+        token,
+        agent_id,
+        model: getElevenStatus().llm,
+        voice: getElevenStatus().voice_id,
+      });
+    }
+
+    // OpenAI Realtime GA
     const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
       method: "POST",
       headers: {
@@ -94,11 +132,8 @@ app.post("/api/realtime/session", async (_req, res) => {
         "OpenAI-Safety-Identifier": "callai-store-operator",
       },
       body: JSON.stringify({
-        expires_after: {
-          anchor: "created_at",
-          seconds: 600,
-        },
-        session: buildSessionConfig(),
+        expires_after: { anchor: "created_at", seconds: 600 },
+        session: buildOpenAISessionConfig(),
       }),
     });
 
@@ -111,8 +146,8 @@ app.post("/api/realtime/session", async (_req, res) => {
       });
     }
 
-    // Normalize for the client: GA returns { value, expires_at, session }
     res.json({
+      provider: "openai",
       value: data.value,
       client_secret: { value: data.value },
       model: data.session?.model || REALTIME_MODEL,
@@ -122,18 +157,38 @@ app.post("/api/realtime/session", async (_req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Session yaradılarkən xəta baş verdi", message: err.message });
+    res.status(500).json({ error: "Session yaradılarkən xəta baş verdi", message: String(err.message || err) });
   }
 });
 
-/** Execute store/operator tools called by the realtime model */
+/** Force recreate / sync ElevenLabs agent */
+app.post("/api/elevenlabs/sync", async (_req, res) => {
+  if (!elevenConfigured()) {
+    return res.status(400).json({ error: "ELEVENLABS_API_KEY yoxdur" });
+  }
+  try {
+    const result = await ensureElevenAgent({ force: true });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: String(err.message || err) });
+  }
+});
+
+/** Execute store/operator tools */
 app.post("/api/tools/:name", (req, res) => {
   const handler = toolHandlers[req.params.name];
   if (!handler) {
     return res.status(404).json({ error: `Alət tapılmadı: ${req.params.name}` });
   }
   try {
-    const result = handler(req.body || {});
+    // ElevenLabs webhooks wrap params; client tools send flat body
+    const raw = req.body || {};
+    const args = raw.parameters && typeof raw.parameters === "object" ? raw.parameters : raw;
+    const result = handler(args);
+    // Also support ElevenLabs webhook response shape if needed later
+    if (req.query.format === "eleven") {
+      return res.json({ result });
+    }
     res.json(result);
   } catch (err) {
     console.error(`Tool ${req.params.name} failed:`, err);
@@ -150,9 +205,16 @@ app.get("*", (req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+  const provider = resolveProvider();
   console.log(`CallAI server http://localhost:${PORT}`);
-  if (!OPENAI_API_KEY) {
-    console.warn("⚠ OPENAI_API_KEY yoxdur — səsli sessiya işləməyəcək.");
+  console.log(`Səs provider: ${provider || "YOX — API açarı lazımdır"}`);
+  if (provider === "elevenlabs") {
+    try {
+      const { agent_id } = await ensureElevenAgent();
+      console.log(`ElevenLabs agent hazır: ${agent_id}`);
+    } catch (err) {
+      console.warn("ElevenLabs agent sync xətası:", err.message || err);
+    }
   }
 });

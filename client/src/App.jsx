@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchHealth, fetchStore } from "./api.js";
-import { VoiceAgent } from "./voiceAgent.js";
+import { createVoiceAgent } from "./createVoiceAgent.js";
 
 const STATUS_LABELS = {
   idle: "Hazır",
@@ -69,7 +69,7 @@ export default function App() {
     setTranscripts([]);
     setTools([]);
     setConnected(true);
-    const agent = new VoiceAgent({
+    const callbacks = {
       onStatus: (s) => {
         setStatus(s);
         if (s === "idle" || s === "error") setConnected(false);
@@ -85,9 +85,10 @@ export default function App() {
         }),
       onError: (err) => setError(err.message || String(err)),
       onRemoteStream: startMeter,
-    });
-    agentRef.current = agent;
+    };
     try {
+      const { agent } = await createVoiceAgent(callbacks);
+      agentRef.current = agent;
       await agent.start();
     } catch (err) {
       setError(err.message || String(err));
@@ -127,8 +128,12 @@ export default function App() {
         <div className="top-meta">
           {store ? <span>{store.hours}</span> : null}
           {health ? (
-            <span className={health.hasApiKey ? "ok" : "warn"}>
-              {health.hasApiKey ? "API hazır" : "API açarı lazımdır"}
+            <span className={health.provider ? "ok" : "warn"}>
+              {health.provider
+                ? health.provider === "elevenlabs"
+                  ? "ElevenLabs · hazır"
+                  : "OpenAI · hazır"
+                : "API açarı lazımdır"}
             </span>
           ) : null}
         </div>

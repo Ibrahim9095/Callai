@@ -1,16 +1,16 @@
 import { createRealtimeSession, runTool } from "./api.js";
 
 /**
- * Low-latency voice via WebRTC → OpenAI Realtime (GA).
- * Mic audio streams directly; tool calls hit our local store/operator API.
+ * OpenAI Realtime (GA) via WebRTC — fallback provider.
  */
 export class VoiceAgent {
-  constructor({ onStatus, onTranscript, onTool, onError, onRemoteStream } = {}) {
+  constructor({ onStatus, onTranscript, onTool, onError, onRemoteStream, session } = {}) {
     this.onStatus = onStatus || (() => {});
     this.onTranscript = onTranscript || (() => {});
     this.onTool = onTool || (() => {});
     this.onError = onError || (() => {});
     this.onRemoteStream = onRemoteStream || (() => {});
+    this.session = session || null;
 
     this.pc = null;
     this.dc = null;
@@ -25,7 +25,8 @@ export class VoiceAgent {
     this.onStatus("connecting");
 
     try {
-      const session = await createRealtimeSession();
+      const session = this.session || (await createRealtimeSession());
+      this.session = session;
       const ephemeralKey = session.value || session.client_secret?.value;
       if (!ephemeralKey) {
         throw new Error("Ephemeral token alınmadı. OPENAI_API_KEY yoxlayın.");
@@ -81,11 +82,10 @@ export class VoiceAgent {
         throw new Error(`WebRTC qoşulması uğursuz: ${errText || sdpResponse.status}`);
       }
 
-      const answer = {
+      await this.pc.setRemoteDescription({
         type: "answer",
         sdp: await sdpResponse.text(),
-      };
-      await this.pc.setRemoteDescription(answer);
+      });
       this.started = true;
     } catch (err) {
       this.onError(err);
@@ -102,7 +102,6 @@ export class VoiceAgent {
   }
 
   #configureSession() {
-    // Keep VAD snappy; tools/instructions already come from client_secret session
     this.#send({
       type: "session.update",
       session: {
@@ -149,9 +148,6 @@ export class VoiceAgent {
     }
 
     switch (event.type) {
-      case "session.created":
-      case "session.updated":
-        break;
       case "input_audio_buffer.speech_started":
         this.onStatus("listening");
         break;
