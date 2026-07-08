@@ -1,0 +1,76 @@
+// AI Voice OS — control-plane schema.
+// Tenancy: every tenant-owned row carries organizationId. Application-layer
+// scoping is enforced in services; DB-level Row-Level Security is a planned
+// hardening step (see docs/DECISIONS.md ADR-0001).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  super_admin
+  org_admin
+  editor
+  viewer
+}
+
+enum ProjectStatus {
+  draft
+  active
+  paused
+}
+
+model Organization {
+  id        String    @id @default(cuid())
+  name      String
+  createdAt DateTime  @default(now())
+  users     User[]
+  projects  Project[]
+}
+
+model User {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String       @unique
+  name           String
+  passwordHash   String
+  role           Role         @default(org_admin)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+model Project {
+  id               String        @id @default(cuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name             String
+  businessTemplate String
+  status           ProjectStatus @default(draft)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  agent            Agent?
+
+  @@index([organizationId])
+}
+
+model Agent {
+  id            String   @id @default(cuid())
+  projectId     String   @unique
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  persona       String   @default("")
+  prompt        String   @default("")
+  language      String   @default("az")
+  voiceProvider String   @default("azure")
+  voiceId       String   @default("az-AZ-BanuNeural")
+  greeting      String?
+  active        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}

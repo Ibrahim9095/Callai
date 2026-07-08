@@ -6,15 +6,31 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 
 ## [Unreleased]
 
-### Added
-- Foundational documentation: `docs/PRD.md`, `docs/ARCHITECTURE.md`,
-  `docs/DECISIONS.md` (ADRs), `docs/ROADMAP.md`.
-- Defined multi-tenant SaaS direction (AI Voice OS) and versioning plan.
-
 ### Notes
 - Provider decisions ADR-0003 (voice: Azure default + ElevenLabs premium) and
-  ADR-0004 (telephony: local SIP/DIDWW for +994, browser calls for PoC) are
-  **Proposed**, pending operator confirmation before code scaffolding.
+  ADR-0004 (telephony: local SIP/DIDWW for +994, browser calls for PoC) remain
+  the working direction; voice adapters land in v0.4.0, telephony in v0.6.0.
+
+## [0.2.0] — Foundation + Admin panel
+
+### Added
+- Foundational docs: `docs/PRD.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`
+  (ADRs), `docs/ROADMAP.md`.
+- **Turborepo monorepo**: `packages/shared`, `apps/api`, `apps/admin-web`.
+- `@aivoiceos/shared`: RBAC roles, business-template registry (9 verticals),
+  voice catalog (Azure az-AZ default + ElevenLabs premium), DTOs.
+- **API (NestJS + Prisma + PostgreSQL)**: JWT auth (`AuthProvider`-style,
+  bcrypt), health, business templates, Projects CRUD, per-project Agent config
+  (persona/prompt/language/voice/greeting/active), activate/pause.
+- **Multi-tenant isolation**: every query scoped by `organizationId`
+  (application-layer guarantee; DB-level RLS is the next hardening step).
+- **Admin console (Next.js)**: login, projects list, create project by business
+  template, project detail with agent configuration and activate/pause. Mobile-first.
+- Prisma schema (Organization/User/Project/Agent) + seed (super-admin).
+
+### Security
+- Passwords hashed with bcrypt; routes guarded by JWT + role (RolesGuard).
+- Secrets kept in gitignored `.env` files (never committed).
 
 ## [0.1.0] — PoC baseline
 

@@ -1,15 +1,27 @@
 {
-  "name": "callai",
-  "version": "1.0.0",
+  "name": "ai-voice-os",
+  "version": "0.2.0",
   "private": true,
-  "description": "Azərbaycan dilində səsli satış və operator AI agenti",
+  "description": "AI Voice OS — Multi-Tenant AI Voice SaaS Platform",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "dev": "concurrently -n server,client -c cyan,magenta \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
-    "install:all": "npm install --prefix server && npm install --prefix client",
-    "build": "npm run build --prefix client",
-    "start": "npm run start --prefix server"
+    "build": "turbo run build",
+    "dev": "turbo run dev --parallel",
+    "dev:api": "npm --workspace @aivoiceos/api run start:dev",
+    "dev:web": "npm --workspace @aivoiceos/admin-web run dev",
+    "db:push": "npm --workspace @aivoiceos/api run db:push",
+    "db:migrate": "npm --workspace @aivoiceos/api run db:migrate",
+    "db:seed": "npm --workspace @aivoiceos/api run db:seed",
+    "lint": "turbo run lint"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "turbo": "^2.3.3",
+    "typescript": "^5.7.3"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
