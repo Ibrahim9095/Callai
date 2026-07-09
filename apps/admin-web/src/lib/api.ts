@@ -114,6 +114,10 @@ export const api = {
       agent_id: string;
       projectId: string;
       projectName: string;
+      businessLabel: string;
+      operatorName: string;
+      operatorGender: "female" | "male" | "unknown";
+      firstMessage: string;
       tools: string[];
     }>(`/projects/${pid}/voice/session`, { method: "POST", body: "{}" }),
   voiceTool: (pid: string, name: string, args: Record<string, unknown>) =>

@@ -8,19 +8,68 @@ import { api, getToken } from "@/lib/api";
 
 const TOOL_NAMES = ["list_collections", "search_records", "create_record", "update_record"] as const;
 
-type Status = "idle" | "connecting" | "live" | "listening" | "speaking" | "tool" | "error";
+type Phase = "idle" | "ringing" | "connecting" | "live" | "listening" | "speaking" | "tool" | "ended" | "error";
 type Line = { role: "user" | "assistant" | "system"; text: string };
+
+/** Soft dual-tone ringtone via Web Audio (no asset file). */
+function createRingtone(ctx: AudioContext) {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const beep = () => {
+    if (stopped) return;
+    const now = ctx.currentTime;
+    for (const [freq, gain] of [
+      [440, 0.08],
+      [480, 0.07],
+    ] as const) {
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      g.gain.setValueAtTime(0, now);
+      g.gain.linearRampToValueAtTime(gain, now + 0.05);
+      g.gain.setValueAtTime(gain, now + 0.9);
+      g.gain.linearRampToValueAtTime(0, now + 1.15);
+      osc.connect(g);
+      g.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 1.2);
+    }
+    timer = setTimeout(beep, 2800);
+  };
+
+  beep();
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+  };
+}
+
+function formatDuration(sec: number) {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
 
 export default function TestCallPage() {
   const router = useRouter();
   const { id: pid } = useParams<{ id: string }>();
   const [projectName, setProjectName] = useState("");
-  const [status, setStatus] = useState<Status>("idle");
+  const [businessLabel, setBusinessLabel] = useState("");
+  const [operatorName, setOperatorName] = useState("Operator");
+  const [operatorGender, setOperatorGender] = useState<"female" | "male" | "unknown">("unknown");
+  const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
   const [toolsLog, setToolsLog] = useState<string[]>([]);
+  const [elapsed, setElapsed] = useState(0);
   const conversationRef = useRef<Awaited<ReturnType<typeof Conversation.startSession>> | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
+  const stopRingRef = useRef<(() => void) | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const liveSinceRef = useRef<number | null>(null);
+  const transcriptEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!getToken()) {
@@ -29,11 +78,40 @@ export default function TestCallPage() {
     }
     api
       .project(pid)
-      .then((p) => setProjectName(p.name))
+      .then((p) => {
+        setProjectName(p.name);
+        setBusinessLabel(p.businessLabel || p.businessTemplate || "");
+        const persona = p.agent?.persona || "Operator";
+        setOperatorName(persona);
+      })
       .catch((e) => setError(e.message));
   }, [pid, router]);
 
-  const stop = useCallback(async () => {
+  useEffect(() => {
+    if (phase !== "live" && phase !== "listening" && phase !== "speaking" && phase !== "tool") return;
+    const t = setInterval(() => {
+      if (liveSinceRef.current) {
+        setElapsed(Math.floor((Date.now() - liveSinceRef.current) / 1000));
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  }, [phase]);
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [lines]);
+
+  const stopRingtone = useCallback(() => {
+    stopRingRef.current?.();
+    stopRingRef.current = null;
+    if (audioCtxRef.current) {
+      void audioCtxRef.current.close().catch(() => undefined);
+      audioCtxRef.current = null;
+    }
+  }, []);
+
+  const hangup = useCallback(async () => {
+    stopRingtone();
     try {
       await conversationRef.current?.endSession?.();
     } catch {
@@ -42,34 +120,35 @@ export default function TestCallPage() {
     conversationRef.current = null;
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
-    setStatus("idle");
-  }, []);
+    liveSinceRef.current = null;
+    setPhase((p) => (p === "idle" ? "idle" : "ended"));
+  }, [stopRingtone]);
 
   useEffect(() => () => {
-    void stop();
-  }, [stop]);
+    void hangup();
+  }, [hangup]);
 
   function pushLine(line: Line) {
-    setLines((prev) => [...prev.slice(-40), line]);
+    setLines((prev) => [...prev.slice(-50), line]);
   }
 
   function buildClientTools() {
     const tools: Record<string, (params?: Record<string, unknown>) => Promise<unknown>> = {};
     for (const name of TOOL_NAMES) {
       tools[name] = async (params = {}) => {
-        setStatus("tool");
-        setToolsLog((prev) => [...prev.slice(-20), `→ ${name}(${JSON.stringify(params).slice(0, 120)})`]);
+        setPhase("tool");
+        setToolsLog((prev) => [...prev.slice(-24), `→ ${name}`]);
         try {
           const result = await api.voiceTool(pid, name, params);
           setToolsLog((prev) => [
-            ...prev.slice(-20),
-            `✓ ${name}: ${JSON.stringify(result).slice(0, 160)}`,
+            ...prev.slice(-24),
+            `✓ ${name}: ${JSON.stringify(result).slice(0, 140)}`,
           ]);
-          setStatus("live");
+          setPhase("live");
           return result;
         } catch (err: any) {
-          setToolsLog((prev) => [...prev.slice(-20), `✗ ${name}: ${err.message}`]);
-          setStatus("live");
+          setToolsLog((prev) => [...prev.slice(-24), `✗ ${name}: ${err.message}`]);
+          setPhase("live");
           return { error: err.message };
         }
       };
@@ -77,44 +156,83 @@ export default function TestCallPage() {
     return tools;
   }
 
-  async function start() {
+  async function startCall() {
     setError("");
     setLines([]);
     setToolsLog([]);
-    setStatus("connecting");
-    pushLine({ role: "system", text: "Sessiya açılır…" });
+    setElapsed(0);
+    setPhase("ringing");
+    pushLine({ role: "system", text: "Zəng edilir…" });
 
     try {
-      const session = await api.voiceSession(pid);
-      try {
-        localStreamRef.current = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        });
-      } catch {
-        /* SDK may request mic */
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+      if (Ctx) {
+        const ctx: AudioContext = new Ctx();
+        audioCtxRef.current = ctx;
+        if (ctx.state === "suspended") await ctx.resume();
+        stopRingRef.current = createRingtone(ctx);
       }
+    } catch {
+      /* ringtone optional */
+    }
+
+    // Let the ringtone play briefly so it feels like a real call
+    await new Promise((r) => setTimeout(r, 2200));
+
+    setPhase("connecting");
+    pushLine({ role: "system", text: "Qoşulur…" });
+
+    try {
+      // Prefetch mic during connect to cut WebRTC setup time
+      const micPromise = navigator.mediaDevices
+        .getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            channelCount: 1,
+          },
+        })
+        .catch(() => null);
+
+      const session = await api.voiceSession(pid);
+      setOperatorName(session.operatorName || operatorName);
+      setOperatorGender(session.operatorGender || "unknown");
+      setBusinessLabel(session.businessLabel || businessLabel);
+      setProjectName(session.projectName || projectName);
+
+      localStreamRef.current = await micPromise;
+
+      stopRingtone();
 
       conversationRef.current = await Conversation.startSession({
         conversationToken: session.token,
         connectionType: "webrtc",
         clientTools: buildClientTools(),
         onConnect: () => {
-          setStatus("live");
-          pushLine({ role: "system", text: "Bağlandı — danışa bilərsiniz" });
+          liveSinceRef.current = Date.now();
+          setPhase("live");
+          pushLine({ role: "system", text: "Zəng açıldı" });
+          if (session.firstMessage) {
+            pushLine({ role: "assistant", text: session.firstMessage });
+          }
         },
         onDisconnect: () => {
-          setStatus("idle");
+          stopRingtone();
+          liveSinceRef.current = null;
+          setPhase("ended");
           pushLine({ role: "system", text: "Zəng bitdi" });
         },
         onError: (err) => {
           const message = typeof err === "string" ? err : (err as Error)?.message || "Səs xətası";
           setError(message);
-          setStatus("error");
+          setPhase("error");
+          stopRingtone();
         },
         onModeChange: ({ mode }) => {
-          if (mode === "speaking") setStatus("speaking");
-          else if (mode === "listening") setStatus("listening");
-          else setStatus("live");
+          if (mode === "speaking") setPhase("speaking");
+          else if (mode === "listening") setPhase("listening");
+          else setPhase("live");
         },
         onMessage: (message) => {
           const role = message?.source === "user" ? "user" : "assistant";
@@ -123,107 +241,144 @@ export default function TestCallPage() {
         },
       });
     } catch (e: any) {
+      stopRingtone();
       setError(e.message || "Zəng başladılmadı");
-      setStatus("error");
+      setPhase("error");
     }
   }
 
-  const busy = status === "connecting" || status === "live" || status === "listening" || status === "speaking" || status === "tool";
+  const inCall =
+    phase === "ringing" ||
+    phase === "connecting" ||
+    phase === "live" ||
+    phase === "listening" ||
+    phase === "speaking" ||
+    phase === "tool";
+
+  const avatarLetter = (operatorName || "O").replace(/\s+(xanım|bəy)$/i, "").charAt(0).toUpperCase();
 
   return (
-    <>
+    <div className="call-page">
       <div className="topbar">
-        <div className="brand">AI Voice <span>OS</span></div>
-        <Link href={`/projects/${pid}`} className="back">← Layihə</Link>
+        <div className="brand">
+          AI Voice <span>OS</span>
+        </div>
+        <Link href={`/projects/${pid}`} className="back">
+          ← Layihə
+        </Link>
       </div>
 
-      <div className="container grid" style={{ gap: "1.1rem", maxWidth: 720 }}>
-        <div>
-          <h1 className="title" style={{ margin: 0 }}>Test zəng</h1>
-          <p className="muted" style={{ margin: "0.3rem 0 0" }}>
-            {projectName || "…"} — agent yüklənmiş fayllardan oxuyub rezerv/sifariş yaza bilər.
-            Mikrofon icazəsi lazımdır.
-          </p>
-        </div>
+      <div className="call-shell">
+        <div className={`call-stage ${inCall ? "active" : ""} ${phase === "ringing" ? "ringing" : ""}`}>
+          <div className="call-aura" aria-hidden />
+          <div className={`call-avatar ${operatorGender}`}>
+            <span>{avatarLetter}</span>
+          </div>
 
-        <section className="card grid">
-          <div className="row">
-            <span className={`pill ${status === "error" ? "paused" : status === "idle" ? "draft" : "active"}`}>
-              {statusLabel(status)}
-            </span>
-            <div className="spacer" />
-            {!busy ? (
-              <button className="btn primary" onClick={start}>
-                Zəngi başlat
+          <div className="call-identity">
+            <h1 className="call-name">{operatorName}</h1>
+            <p className="call-role">
+              {businessLabel || "Operator"}
+              {projectName ? ` · ${projectName}` : ""}
+            </p>
+            <p className={`call-status-line phase-${phase}`}>{phaseLabel(phase)}</p>
+            {inCall && phase !== "ringing" && phase !== "connecting" ? (
+              <p className="call-timer">{formatDuration(elapsed)}</p>
+            ) : null}
+          </div>
+
+          {phase === "ringing" ? (
+            <div className="ring-waves" aria-hidden>
+              <span />
+              <span />
+              <span />
+            </div>
+          ) : null}
+
+          {error ? <p className="error call-error">{error}</p> : null}
+
+          <div className="call-actions">
+            {!inCall ? (
+              <button className="call-btn start" onClick={() => void startCall()} type="button">
+                <span className="call-btn-icon" aria-hidden>
+                  ☎
+                </span>
+                Zəng et
               </button>
             ) : (
-              <button className="btn danger" onClick={() => void stop()}>
-                Bitir
+              <button className="call-btn hangup" onClick={() => void hangup()} type="button">
+                <span className="call-btn-icon" aria-hidden>
+                  ✕
+                </span>
+                Zəngi bitir
               </button>
             )}
           </div>
-          {error ? <p className="error">{error}</p> : null}
-          <p className="hint" style={{ margin: 0 }}>
-            Nümunə: «Boş otaq varmı?» və ya «2 nəfərlik masa rezerv edim, sabah 19:00».
-            Agent əvvəl dataya baxacaq, sonra «Rezervlər»ə yazacaq.
-          </p>
-        </section>
 
-        <section className="card">
-          <h2 className="title" style={{ fontSize: "1.05rem", marginTop: 0 }}>Transkript</h2>
+          {phase === "idle" || phase === "ended" ? (
+            <p className="call-hint">
+              Zəng açılanda operator özünü təqdim edəcək, sonra «Buyurun, necə kömək edə bilərəm?»
+              deyəcək. Mikrofon icazəsi lazımdır.
+            </p>
+          ) : null}
+        </div>
+
+        <section className="call-transcript card">
+          <div className="row" style={{ marginBottom: "0.5rem" }}>
+            <h2 className="title" style={{ fontSize: "1.05rem", margin: 0 }}>
+              Söhbət
+            </h2>
+            {phase === "tool" ? <span className="pill active">Dataya baxır…</span> : null}
+          </div>
           {lines.length === 0 ? (
-            <p className="muted">Hələ söhbət yoxdur.</p>
+            <p className="muted">Zəng başlayanda söhbət burada görünəcək.</p>
           ) : (
-            <div className="list" style={{ maxHeight: 320, overflowY: "auto" }}>
+            <div className="transcript-list">
               {lines.map((l, i) => (
-                <div key={i} style={{ padding: "0.35rem 0", borderBottom: "1px solid var(--line)" }}>
-                  <small className="muted">
-                    {l.role === "user" ? "Siz" : l.role === "assistant" ? "Agent" : "Sistem"}
+                <div key={i} className={`bubble ${l.role}`}>
+                  <small>
+                    {l.role === "user" ? "Siz" : l.role === "assistant" ? operatorName : "Sistem"}
                   </small>
                   <div>{l.text}</div>
                 </div>
               ))}
+              <div ref={transcriptEndRef} />
             </div>
           )}
         </section>
 
         {toolsLog.length > 0 ? (
-          <section className="card">
-            <h2 className="title" style={{ fontSize: "1.05rem", marginTop: 0 }}>Alətlər (fayl oxu/yaz)</h2>
-            <pre
-              style={{
-                margin: 0,
-                fontSize: "0.75rem",
-                whiteSpace: "pre-wrap",
-                color: "var(--muted)",
-                maxHeight: 200,
-                overflowY: "auto",
-              }}
-            >
-              {toolsLog.join("\n")}
-            </pre>
+          <section className="card call-tools">
+            <h2 className="title" style={{ fontSize: "0.95rem", marginTop: 0 }}>
+              Siyahı oxu / yaz
+            </h2>
+            <pre>{toolsLog.join("\n")}</pre>
           </section>
         ) : null}
       </div>
-    </>
+    </div>
   );
 }
 
-function statusLabel(s: Status) {
-  switch (s) {
+function phaseLabel(p: Phase) {
+  switch (p) {
+    case "ringing":
+      return "Zəng gəlir…";
     case "connecting":
       return "Qoşulur…";
     case "live":
-      return "Canlı";
+      return "Danışıqda";
     case "listening":
       return "Dinləyir";
     case "speaking":
       return "Danışır";
     case "tool":
-      return "Dataya baxır…";
+      return "Siyahılara baxır…";
+    case "ended":
+      return "Zəng bitdi";
     case "error":
       return "Xəta";
     default:
-      return "Hazır";
+      return "Zəngə hazır";
   }
 }

@@ -1,4 +1,10 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  buildCallGreeting,
+  formatOperatorDisplayName,
+  getBusinessTemplate,
+  inferOperatorGender,
+} from "@aivoiceos/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { KnowledgeService } from "../knowledge/knowledge.service";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "./agent-tools";
@@ -29,6 +35,14 @@ export class VoiceService {
     return project;
   }
 
+  private businessLabelOf(project: {
+    businessTemplate: string;
+    businessLabel: string | null;
+  }) {
+    if (project.businessLabel?.trim()) return project.businessLabel.trim();
+    return getBusinessTemplate(project.businessTemplate)?.label || project.businessTemplate;
+  }
+
   /** Start a browser WebRTC test call for this project (ElevenLabs for now). */
   async createSession(organizationId: string, projectId: string) {
     const project = await this.loadProject(organizationId, projectId);
@@ -39,19 +53,31 @@ export class VoiceService {
       );
     }
 
-    const cached = project.agent!.externalAgentId || null;
+    const agent = project.agent!;
+    const businessLabel = this.businessLabelOf(project);
+    const gender = inferOperatorGender(agent.persona, agent.voiceId);
+    const operatorName = formatOperatorDisplayName(agent.persona || "Operator", gender);
+    const firstMessage = buildCallGreeting({
+      persona: agent.persona,
+      businessLabel,
+      templateId: project.businessTemplate,
+      voiceId: agent.voiceId,
+      customGreeting: agent.greeting,
+    });
+
+    const cached = agent.externalAgentId || null;
 
     const { agent_id } = await ensureProjectElevenAgent({
       projectId: project.id,
       projectName: project.name,
-      persona: project.agent!.persona,
-      prompt: project.agent!.prompt,
-      greeting: project.agent!.greeting,
-      language: project.agent!.language || "az",
+      persona: agent.persona,
+      prompt: agent.prompt,
+      firstMessage,
+      language: agent.language || "az",
       cachedAgentId: cached,
     });
 
-    if (project.agent!.externalAgentId !== agent_id) {
+    if (agent.externalAgentId !== agent_id) {
       await this.prisma.agent.update({
         where: { projectId },
         data: { externalAgentId: agent_id },
@@ -65,6 +91,10 @@ export class VoiceService {
       agent_id,
       projectId: project.id,
       projectName: project.name,
+      businessLabel,
+      operatorName,
+      operatorGender: gender,
+      firstMessage,
       tools: [...AGENT_TOOL_NAMES],
     };
   }

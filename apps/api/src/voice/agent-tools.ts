@@ -19,14 +19,14 @@ export const AGENT_TOOLS = [
     type: "function" as const,
     name: "list_collections",
     description:
-      "Layihədəki bütün siyahıları (vərəqləri) göstərir: Otaqlar, Rezervlər, Menyu və s. Əvvəlcə bunu çağır ki, nə oxuya/yaza biləcəyini biləsən.",
+      "Layihədəki bütün siyahıları (vərəqləri) göstərir: Otaqlar, Rezervlər, Menyu və s. Zəngin əvvəlində və ya lazım olanda çağır — əlində nə qədər siyahı varsa bil.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function" as const,
     name: "search_records",
     description:
-      "Siyahılarda axtarış. Boş otaq, qiymət, masa, menyu, stok — hər şey buradan. Uydurma demə; yalnız nəticəni de.",
+      "Siyahılarda axtarış. Boş otaq, qiymət, masa, menyu, stok — hər şey buradan. Uydurma demə; yalnız nəticəni de. Bütün siyahılarda axtara bilərsən.",
     parameters: {
       type: "object",
       properties: {
@@ -52,7 +52,7 @@ export const AGENT_TOOLS = [
     type: "function" as const,
     name: "create_record",
     description:
-      "Yeni rezerv / sifariş / növbə əlavə et. Müştəri təsdiqindən sonra çağır. collection: Rezervlər, Sifarişlər və s.",
+      "Yeni rezerv / sifariş / növbə / qeyd əlavə et. Müştəri təsdiqindən sonra çağır. collection: Rezervlər, Sifarişlər və s.",
     parameters: {
       type: "object",
       properties: {
@@ -96,10 +96,15 @@ export const AGENT_TOOLS = [
 /** Extra prompt rules appended for live calls (AZ). */
 export const VOICE_RUNTIME_RULES = `
 ALƏTLƏR (canlı zəng):
-- Əvvəl list_collections ilə siyahıları öyrən.
-- Qiymət/stok/boş yer üçün search_records — uydurma demə.
-- Baxarkən qısaca: "Bir saniyə, zəhmət olmasa".
-- Rezerv/sifariş təsdiqlənəndə create_record ilə müvafiq siyahıya yaz.
+- Əvvəl list_collections ilə əlindəki bütün siyahıları öyrən.
+- Qiymət/stok/boş yer üçün search_records — uydurma demə; lazım olsa bir neçə siyahını yoxla.
+- Baxarkən qısaca: "Bir saniyə, zəhmət olmasa" — sonra tez cavab ver.
+- Rezerv/sifariş/qeyd təsdiqlənəndə create_record ilə müvafiq siyahıya yaz.
 - Lazım olsa update_record (məs. available=false).
-- Cavablar 1-2 qısa cümlə; yalnız Azərbaycan dili.
+
+DANIŞIQ SÜRƏTİ VƏ DİQQƏT:
+- Müştərini diqqətlə dinlə; sözünü kəsmə.
+- Cavablar 1-2 qısa cümlə; gecikmədən danış.
+- Yalnız Azərbaycan dili.
+- İlk salamlamada özünü və sahəni təqdim et, sonra "Buyurun, necə kömək edə bilərəm?"
 `.trim();

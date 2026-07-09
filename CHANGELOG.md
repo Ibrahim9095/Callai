@@ -7,6 +7,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 ## [Unreleased]
 
 ### Added
+- **Call screen polish**: ringtone while connecting, large hang-up button,
+  operator display name with xanım/bəy, business role on screen, call timer,
+  chat bubbles. Greeting auto-builds as
+  «Salam, mən {Ad xanım/bəy}. {Sahə} operatoruyam. Buyurun, necə kömək edə bilərəm?»
+- Lower WebRTC latency (ElevenLabs streaming latency 4, eager turn-taking) and
+  stronger listen/search/write rules for live calls.
 - **PDF / TXT / DOCX upload** alongside Excel/CSV — mobile file picker accepts
   these types; clearer error when a format is unsupported. PDF/Word become a
   text collection; spreadsheets stay multi-sheet → collections.

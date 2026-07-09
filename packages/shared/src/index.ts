@@ -9,3 +9,4 @@ export * from "./voice";
 export * from "./phone";
 export * from "./collections";
 export * from "./dto";
+export * from "./operator";

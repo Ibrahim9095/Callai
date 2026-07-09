@@ -1,6 +1,6 @@
 /**
  * ElevenLabs Conversational AI adapter — per-project agent sync + session token.
- * Client tools run in the browser and hit our /api/projects/:id/voice/tools/:name.
+ * Tuned for low WebRTC latency and careful turn-taking.
  */
 
 import { AGENT_TOOLS, VOICE_RUNTIME_RULES } from "./agent-tools";
@@ -75,9 +75,9 @@ export interface ProjectAgentSpec {
   projectName: string;
   persona: string;
   prompt: string;
-  greeting?: string | null;
+  /** Fully built first message (intro + buyurun…) */
+  firstMessage: string;
   language: string;
-  /** Cached ElevenLabs agent id if we already created one for this project */
   cachedAgentId?: string | null;
 }
 
@@ -85,9 +85,6 @@ function buildAgentBody(spec: ProjectAgentSpec) {
   const voiceId = process.env.ELEVENLABS_VOICE_ID || "FDs1ZX5J4e4f2c2erxtW";
   const llm = process.env.ELEVENLABS_LLM || "gemini-2.5-flash";
   const ttsModel = process.env.ELEVENLABS_TTS_MODEL || "eleven_v3_conversational";
-  const first =
-    (spec.greeting && spec.greeting.trim()) ||
-    `Salam, ${spec.projectName}-dən ${spec.persona || "operator"}. Buyurun, necə kömək edə bilərəm?`;
 
   const prompt = `${spec.prompt}\n\n${VOICE_RUNTIME_RULES}`.trim();
 
@@ -95,12 +92,12 @@ function buildAgentBody(spec: ProjectAgentSpec) {
     name: `AI Voice OS — ${spec.projectName}`.slice(0, 80),
     conversation_config: {
       agent: {
-        first_message: first,
+        first_message: spec.firstMessage,
         language: spec.language || "az",
         prompt: {
           prompt,
           llm,
-          temperature: 0.7,
+          temperature: 0.55,
           tools: toElevenClientTools(),
         },
       },
@@ -108,10 +105,11 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         voice_id: voiceId,
         model_id: ttsModel,
         expressive_mode: true,
-        stability: 0.35,
-        similarity_boost: 0.75,
-        speed: 0.95,
-        optimize_streaming_latency: 2,
+        stability: 0.4,
+        similarity_boost: 0.72,
+        speed: 1.02,
+        // Lowest streaming latency for WebRTC
+        optimize_streaming_latency: 4,
         agent_output_audio_format: "pcm_16000",
       },
       asr: {
@@ -120,9 +118,10 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         user_input_audio_format: "pcm_16000",
       },
       turn: {
-        turn_timeout: 8,
+        // Faster turn-taking: less silence before agent responds
+        turn_timeout: 6,
         silence_end_call_timeout: -1,
-        turn_eagerness: "patient",
+        turn_eagerness: "eager",
         speculative_turn: true,
         turn_model: "turn_v3",
       },
@@ -150,7 +149,6 @@ export async function ensureProjectElevenAgent(spec: ProjectAgentSpec): Promise<
       await patchRes.json().catch(() => ({}));
       return { agent_id: agentId };
     }
-    // fall through to create if patch failed (deleted agent, etc.)
   }
 
   const createRes = await fetch(`${ELEVEN_API}/convai/agents/create`, {
