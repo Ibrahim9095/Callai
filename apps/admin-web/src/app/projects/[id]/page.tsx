@@ -75,7 +75,7 @@ export default function ProjectDetailPage() {
         voiceId: op.voiceId,
         temperature: Number(agent.temperature ?? 0.45),
         maxTokens: agent.maxTokens ? Number(agent.maxTokens) : null,
-        greeting: "",
+        greeting: agent.greeting || "",
       });
       setProject(updated);
       setAgent(updated.agent);
@@ -258,7 +258,24 @@ export default function ProjectDetailPage() {
           </div>
 
           <div>
-            <label>User Prompt (hər zəngin əvvəlində)</label>
+            <label>Salamlama (zəng açılınca SƏSLƏNİR)</label>
+            <textarea
+              value={agent.greeting || ""}
+              onChange={(e) => {
+                setSaved(false);
+                setDirty(true);
+                setAgent({ ...agent, greeting: e.target.value });
+              }}
+              placeholder={`Boş buraxın → avtomatik: «Salam. ${project?.name || "Şirkət"}-dən mən ${currentOp.name}${currentOp.id === "leyla" ? "yam" : "əm"}. Buyurun…»`}
+              rows={2}
+            />
+            <p className="hint">
+              Yalnız bu mətn (və ya avtomatik salam) səslənir. Operator adını daxil edin.
+            </p>
+          </div>
+
+          <div>
+            <label>User Prompt (səssiz təlimat — SƏSLƏNMİR)</label>
             <textarea
               value={agent.userPrompt || ""}
               onChange={(e) => {
@@ -269,7 +286,9 @@ export default function ProjectDetailPage() {
               placeholder="Məs: Bu gün yeni kampaniyanı ilk olaraq müştəriyə təqdim et."
               rows={3}
             />
-            <p className="hint">Hər danışığın başlanğıcında AI-yə göndərilir.</p>
+            <p className="hint">
+              AI-yə daxili göstərişdir. «Salam mən Leylayam…» yazmayın — o Salamlama sahəsinə aiddir.
+            </p>
           </div>
 
           <div className="grid cols-2">
@@ -395,7 +414,7 @@ export default function ProjectDetailPage() {
               <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Test zəng (voice)</h2>
             <p className="muted" style={{ margin: "0.3rem 0 0" }}>
               {project.status === "active"
-                ? `Salam: «${project.name}» + «${currentOp.name}». Əvvəl Yadda saxla, sonra zəng.`
+                ? `Peşəkar CallAI interfeysi açılacaq. Salam: şirkət + «${currentOp.name}» (User Prompt səslənmir).`
                 : "Layihə deaktivdir — əvvəl «Aktiv et», sonra Test zəng."}
             </p>
             </div>

@@ -163,7 +163,8 @@ export class ProjectsService {
       data.voiceProvider = operator.voiceProvider;
       data.voiceId = operator.voiceId;
       data.externalAgentId = null;
-      data.greeting = null;
+      // Keep greeting unless explicitly cleared — do not wipe on operator change
+      if (dto.greeting !== undefined) data.greeting = dto.greeting;
     } else {
       if (dto.voiceProvider !== undefined) data.voiceProvider = dto.voiceProvider;
       if (dto.voiceId !== undefined) data.voiceId = dto.voiceId;

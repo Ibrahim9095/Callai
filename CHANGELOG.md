@@ -7,6 +7,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 ## [Unreleased]
 
 ### Changed
+- **Call UI:** Admin «Test zəng» opens the professional CallAI interface
+  (legacy orb / Fraunces+Manrope layout) — same look as the original AI Agent Voice.
+- **Salamlama vs User Prompt:** Spoken greeting is ONLY `agent.greeting` or the
+  auto company+name template. User Prompt is a silent instruction and is never
+  TTS'd (even if it starts with «Salam…»).
 - **Voice Engine (ADR-0003):** ElevenLabs removed from the default path. New
   `@aivoiceos/voice-engine` port with **Edge Neural** adapter — free Microsoft
   neural TTS (`az-AZ-BanuNeural` / `az-AZ-BabekNeural`), browser Web Speech STT

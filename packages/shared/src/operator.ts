@@ -182,12 +182,8 @@ export function buildCallGreeting(opts: {
   ).trim();
 
   const custom = (opts.customGreeting || "").trim();
-  if (
-    custom.length >= 12 &&
-    custom.toLowerCase().includes(op.name.toLowerCase()) &&
-    (!company || custom.toLowerCase().includes(company.toLowerCase().slice(0, 8)))
-  ) {
-    return custom;
+  if (custom.length >= 8 && custom.toLowerCase().includes(op.name.toLowerCase())) {
+    return custom.replace(/\s+/g, " ").trim();
   }
 
   const from = company ? `${companyAblative(company)} ` : "";

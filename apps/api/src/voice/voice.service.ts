@@ -78,12 +78,10 @@ export class VoiceService {
       gender,
     });
 
+    // Spoken greeting comes ONLY from agent.greeting or auto company+name template.
+    // User Prompt is never used as spoken text.
     let greeting = (agent.greeting || "").trim() || null;
-    if (
-      greeting &&
-      (!greeting.toLowerCase().includes(persona.toLowerCase()) ||
-        (companyName && !greeting.toLowerCase().includes(companyName.toLowerCase().slice(0, 6))))
-    ) {
+    if (greeting && !greeting.toLowerCase().includes(persona.toLowerCase())) {
       greeting = null;
     }
 
@@ -111,6 +109,7 @@ export class VoiceService {
       identityBlock: identity,
       systemPrompt: agent.prompt || "",
       userPrompt: agent.userPrompt || "",
+      firstMessage,
       persona,
       companyName,
     });
@@ -219,7 +218,7 @@ export class VoiceService {
     return provider.speak({
       text,
       voiceId: bundle.ttsVoiceId,
-      rate: "+10%",
+      rate: "+8%",
     });
   }
 

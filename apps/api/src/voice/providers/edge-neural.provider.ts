@@ -86,7 +86,8 @@ export class EdgeNeuralVoiceProvider implements VoiceProvider {
       // WEBM opus — small, browser-friendly
       await tts.setMetadata(voiceId, OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS);
       const { audioStream } = tts.toStream(text, {
-        rate: req.rate || "+10%",
+        // Natural call-center pace (slightly brisk, not rushed)
+        rate: req.rate || "+8%",
         pitch: "+0Hz",
         volume: "+0%",
       });
@@ -125,9 +126,9 @@ export class EdgeNeuralVoiceProvider implements VoiceProvider {
     ];
 
     const maxTokens =
-      req.maxTokens && req.maxTokens > 0 ? Math.min(req.maxTokens, 400) : 180;
+      req.maxTokens && req.maxTokens > 0 ? Math.min(req.maxTokens, 280) : 140;
     const temperature =
-      typeof req.temperature === "number" ? Math.min(1, Math.max(0, req.temperature)) : 0.4;
+      typeof req.temperature === "number" ? Math.min(1, Math.max(0, req.temperature)) : 0.35;
 
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -156,7 +157,7 @@ export class EdgeNeuralVoiceProvider implements VoiceProvider {
     const spoken = await this.speak({
       text: replyText,
       voiceId: req.voiceId,
-      rate: "+10%",
+      rate: "+8%",
     });
 
     return {
