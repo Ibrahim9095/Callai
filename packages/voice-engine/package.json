@@ -1,0 +1,14 @@
+{
+  "name": "@aivoiceos/voice-engine",
+  "version": "0.2.0",
+  "private": true,
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "echo \"(voice-engine) no lint yet\""
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

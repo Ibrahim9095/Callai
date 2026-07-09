@@ -1,0 +1,156 @@
+// AI Voice OS — control-plane schema.
+// Tenancy: every tenant-owned row carries organizationId. Application-layer
+// scoping is enforced in services; DB-level Row-Level Security is a planned
+// hardening step (see docs/DECISIONS.md ADR-0001).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  super_admin
+  org_admin
+  editor
+  viewer
+}
+
+enum ProjectStatus {
+  draft
+  active
+  paused
+}
+
+enum PhoneStatus {
+  pending // assigned in platform, live routing not provisioned yet (needs SIP trunk)
+  active // provisioned and routing to the agent
+}
+
+model Organization {
+  id        String    @id @default(cuid())
+  name      String
+  createdAt DateTime  @default(now())
+  users     User[]
+  projects  Project[]
+}
+
+model User {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  email          String       @unique
+  name           String
+  passwordHash   String
+  role           Role         @default(org_admin)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+}
+
+model Project {
+  id               String        @id @default(cuid())
+  organizationId   String
+  organization     Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name             String
+  businessTemplate String
+  businessLabel    String?
+  status           ProjectStatus @default(draft)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  agent            Agent?
+  phoneNumber      PhoneNumber?
+  collections      Collection[]
+  dataFiles        DataFile[]
+
+  @@index([organizationId])
+}
+
+// An uploaded source file (Excel/CSV/PDF/…). One spreadsheet may contain
+// multiple sheets; each sheet becomes a Collection. Documents become one
+// text collection. The agent reads all of a project's data.
+model DataFile {
+  id          String       @id @default(cuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  filename    String
+  kind        String // xlsx | xls | csv | pdf | txt | docx
+  sheetCount  Int          @default(0)
+  rowCount    Int          @default(0)
+  createdAt   DateTime     @default(now())
+  collections Collection[]
+
+  @@index([projectId])
+}
+
+model Collection {
+  id        String             @id @default(cuid())
+  projectId String
+  project   Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileId    String?
+  file      DataFile?          @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  name      String // machine key, e.g. "rooms"
+  label     String // sheet name / human label
+  fields    Json // FieldDef[]
+  createdAt DateTime           @default(now())
+  records   CollectionRecord[]
+
+  @@unique([projectId, name])
+  @@index([projectId])
+  @@index([fileId])
+}
+
+model CollectionRecord {
+  id           String     @id @default(cuid())
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  projectId    String // denormalized for tenant/project scoping
+  data         Json
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([collectionId])
+  @@index([projectId])
+  @@map("collection_records")
+}
+
+model PhoneNumber {
+  id          String      @id @default(cuid())
+  projectId   String      @unique
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  e164        String
+  operator    String?
+  provider    String      @default("manual") // manual | sip:<provider>
+  status      PhoneStatus @default(pending)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+}
+
+model Agent {
+  id              String   @id @default(cuid())
+  projectId       String   @unique
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  persona         String   @default("")
+  /// System Prompt — durable business rules (platform appends identity + AZ style)
+  prompt          String   @default("")
+  /// User Prompt — injected at the start of every live conversation
+  userPrompt      String   @default("")
+  language        String   @default("az")
+  voiceProvider   String   @default("edge_neural")
+  voiceId         String   @default("az-AZ-BanuNeural")
+  /// LLM temperature 0–1 (internal; not shown in admin)
+  temperature     Float    @default(0.35)
+  /// Optional max tokens (internal; not shown in admin)
+  maxTokens       Int?
+  /// Spoken pace multiplier: 0.8 | 1.0 | 1.2 | 1.4 | 1.6 (default 1.2 — natural call-center)
+  speechSpeed     Float    @default(1.2)
+  /// Cached remote provider agent id (optional; unused by pipeline providers)
+  externalAgentId String?
+  greeting        String?
+  active          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

@@ -1,0 +1,502 @@
+:root {
+  --bg: #0b1220;
+  --panel: #121a2b;
+  --panel-2: #172136;
+  --line: rgba(255, 255, 255, 0.09);
+  --ink: #eef2f8;
+  --muted: #97a3b6;
+  --accent: #5b8cff;
+  --accent-2: #7dd3fc;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --danger: #f87171;
+  --radius: 14px;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body { background: var(--bg); color: var(--ink); }
+a { color: inherit; text-decoration: none; }
+button, input, select, textarea { font: inherit; }
+
+.container { max-width: 1040px; margin: 0 auto; padding: 1.25rem clamp(1rem, 3vw, 2rem); }
+
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.9rem clamp(1rem, 3vw, 2rem);
+  border-bottom: 1px solid var(--line); position: sticky; top: 0;
+  background: rgba(11, 18, 32, 0.85); backdrop-filter: blur(8px); z-index: 10;
+}
+.brand { font-weight: 800; letter-spacing: -0.01em; }
+.brand span { color: var(--accent); }
+.muted { color: var(--muted); }
+.row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+
+.btn {
+  border: 1px solid var(--line); background: var(--panel-2); color: var(--ink);
+  padding: 0.6rem 1rem; border-radius: 999px; cursor: pointer; transition: 0.15s;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: linear-gradient(135deg, var(--accent), #3f6fe0); border: 0; font-weight: 700; }
+.btn.ghost { background: transparent; }
+.btn.danger { color: #ffd7d2; border-color: rgba(248,113,113,0.4); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.1rem; }
+.grid { display: grid; gap: 0.9rem; }
+@media (min-width: 720px) { .grid.cols-2 { grid-template-columns: 1fr 1fr; } }
+
+label { display: block; font-size: 0.85rem; color: var(--muted); margin: 0.5rem 0 0.3rem; }
+input, select, textarea {
+  width: 100%; background: var(--panel-2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 10px; padding: 0.7rem 0.8rem;
+}
+textarea { min-height: 160px; resize: vertical; font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem; }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+
+.pill { font-size: 0.72rem; padding: 0.2rem 0.6rem; border-radius: 999px; border: 1px solid var(--line); }
+.pill.active { color: #052e16; background: var(--ok); border: 0; font-weight: 700; }
+.pill.draft { color: var(--muted); }
+.pill.paused { color: #451a03; background: var(--warn); border: 0; font-weight: 700; }
+
+.list { display: grid; gap: 0.7rem; }
+.item { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.9rem 1.1rem; }
+.item h3 { margin: 0; font-size: 1.02rem; }
+.item small { color: var(--muted); }
+
+.center-screen { min-height: 100vh; display: grid; place-items: center; padding: 1.5rem; }
+.auth-card { width: min(420px, 100%); }
+.title { font-size: 1.5rem; font-weight: 800; margin: 0 0 0.3rem; letter-spacing: -0.02em; }
+.error { color: var(--danger); margin-top: 0.6rem; font-size: 0.9rem; }
+.hint { color: var(--muted); font-size: 0.82rem; margin-top: 0.4rem; }
+.back { color: var(--muted); font-size: 0.9rem; }
+
+/* ─── CallAI live call (legacy professional UI) ───────────────── */
+.callai-page {
+  --bg0: #0b1f1c;
+  --bg1: #12352f;
+  --ink: #f3f0e7;
+  --muted: #b7c7c1;
+  --accent: #e2a35a;
+  --accent-deep: #c47d2e;
+  --line: rgba(243, 240, 231, 0.12);
+  --danger: #e07060;
+  --ok: #7dcb9a;
+  --warn: #e2a35a;
+  --panel: rgba(10, 28, 25, 0.72);
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+  --font-display: "Fraunces", Georgia, serif;
+  --font-body: "Manrope", sans-serif;
+  position: relative;
+  min-height: 100vh;
+  overflow-x: hidden;
+  padding: 1.25rem clamp(1rem, 3vw, 2.5rem) 2.5rem;
+  color: var(--ink);
+  font-family: var(--font-body);
+  background: var(--bg0);
+  -webkit-font-smoothing: antialiased;
+}
+
+.callai-atmosphere {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(ellipse 90% 60% at 15% 10%, rgba(226, 163, 90, 0.22), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 85% 20%, rgba(56, 140, 120, 0.35), transparent 50%),
+    radial-gradient(ellipse 80% 70% at 50% 100%, rgba(8, 40, 36, 0.95), transparent 60%),
+    linear-gradient(165deg, #071614 0%, #12352f 45%, #0b1f1c 100%);
+  animation: callaiDrift 18s ease-in-out infinite alternate;
+}
+
+.callai-grain {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.08;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes callaiDrift {
+  from { transform: scale(1) translate3d(0, 0, 0); }
+  to { transform: scale(1.05) translate3d(-1.5%, 1%, 0); }
+}
+
+.callai-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: clamp(1.5rem, 4vh, 3rem);
+}
+
+.callai-brand-mark {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-size: 1.15rem;
+}
+
+.callai-top-meta {
+  display: flex;
+  gap: 0.85rem;
+  flex-wrap: wrap;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.callai-top-meta .ok { color: var(--ok); }
+.callai-back { color: var(--muted); }
+.callai-back:hover { color: var(--ink); }
+
+.callai-hero {
+  min-height: min(72vh, 720px);
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: clamp(1.5rem, 4vw, 3.5rem);
+  align-items: center;
+  margin-bottom: clamp(2rem, 5vh, 3.5rem);
+}
+
+.callai-brand-hero {
+  margin: 0 0 0.35rem;
+  font-family: var(--font-display);
+  font-size: clamp(3.2rem, 9vw, 6.5rem);
+  line-height: 0.92;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+  background: linear-gradient(120deg, #f7f1e4 20%, #e2a35a 70%, #f0d2a0 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: callaiBrandIn 0.9s ease both;
+}
+
+.callai-hero-copy h1 {
+  margin: 0 0 0.85rem;
+  max-width: 16ch;
+  font-family: var(--font-display);
+  font-size: clamp(1.55rem, 3.2vw, 2.35rem);
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--ink);
+  animation: callaiRise 0.8s 0.12s ease both;
+}
+
+.callai-lede {
+  margin: 0 0 1.5rem;
+  max-width: 40ch;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.55;
+  animation: callaiRise 0.8s 0.2s ease both;
+}
+
+.callai-cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  animation: callaiRise 0.8s 0.28s ease both;
+}
+
+.callai-btn {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.9rem 1.35rem;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+  font-family: var(--font-body);
+  font-weight: 600;
+}
+
+.callai-btn:hover { transform: translateY(-1px); }
+
+.callai-btn.primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: #1a1208;
+  font-weight: 700;
+}
+
+.callai-btn.danger {
+  background: rgba(224, 112, 96, 0.18);
+  color: #ffd4ce;
+  border: 1px solid rgba(224, 112, 96, 0.35);
+}
+
+.callai-btn.ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.callai-error {
+  margin-top: 1rem;
+  color: #ffb4a8;
+  max-width: 42ch;
+  line-height: 1.4;
+}
+
+.callai-stage {
+  display: grid;
+  justify-items: center;
+  gap: 0.85rem;
+  padding: 2rem 1rem;
+}
+
+.callai-orb-wrap {
+  position: relative;
+  width: min(280px, 70vw);
+  height: min(280px, 70vw);
+  display: grid;
+  place-items: center;
+}
+
+.callai-orb-ring {
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  border: 1px solid rgba(226, 163, 90, 0.35);
+  box-shadow: 0 0 40px rgba(226, 163, 90, 0.12);
+  transition: transform 80ms linear;
+}
+
+.callai-orb {
+  width: 58%;
+  height: 58%;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 236, 200, 0.55), transparent 40%),
+    radial-gradient(circle at 50% 55%, #2f7a68, #12352f 70%);
+  box-shadow: var(--shadow), inset 0 0 30px rgba(255, 255, 255, 0.08);
+  animation: callaiBreathe 3.6s ease-in-out infinite;
+}
+
+.callai-orb.listening,
+.callai-orb.speaking,
+.callai-orb.tool,
+.callai-orb.thinking {
+  animation: callaiPulseTalk 1.1s ease-in-out infinite;
+}
+
+.callai-orb-core {
+  width: 28%;
+  height: 28%;
+  border-radius: 50%;
+  background: rgba(243, 240, 231, 0.85);
+  box-shadow: 0 0 24px rgba(226, 163, 90, 0.45);
+}
+
+.callai-status-line {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.callai-agent-name {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.callai-workspace {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 1rem;
+}
+
+.callai-panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 1.25rem;
+  padding: 1rem 1.1rem 1.15rem;
+  backdrop-filter: blur(10px);
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
+}
+
+.callai-panel h2 {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 500;
+}
+
+.callai-log {
+  flex: 1;
+  overflow: auto;
+  max-height: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding-right: 0.25rem;
+}
+
+.callai-empty {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.callai-bubble {
+  border-radius: 1rem;
+  padding: 0.7rem 0.85rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+}
+
+.callai-bubble.user {
+  align-self: flex-end;
+  background: rgba(226, 163, 90, 0.1);
+  border-color: rgba(226, 163, 90, 0.25);
+  max-width: 92%;
+}
+
+.callai-bubble.assistant {
+  align-self: flex-start;
+  max-width: 92%;
+}
+
+.callai-bubble.system {
+  align-self: center;
+  background: transparent;
+  border-style: dashed;
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.callai-bubble .who {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+}
+
+.callai-bubble p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.callai-tool-row {
+  border: 1px solid var(--line);
+  border-radius: 0.85rem;
+  padding: 0.65rem 0.75rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.callai-tool-row.running { border-color: rgba(226, 163, 90, 0.4); }
+.callai-tool-row.done { border-color: rgba(125, 203, 154, 0.35); }
+
+.callai-tool-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.92rem;
+}
+
+.callai-tool-head span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.callai-tool-row pre {
+  margin: 0.4rem 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.callai-store-chip {
+  margin-top: 0.85rem;
+  display: grid;
+  gap: 0.2rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.callai-store-chip span:first-child {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.callai-foot {
+  margin-top: 1.75rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+@keyframes callaiBrandIn {
+  from { opacity: 0; transform: translateY(18px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes callaiRise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes callaiBreathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+@keyframes callaiPulseTalk {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.07); filter: brightness(1.12); }
+}
+
+@media (max-width: 900px) {
+  .callai-hero,
+  .callai-workspace {
+    grid-template-columns: 1fr;
+  }
+  .callai-hero { min-height: auto; }
+  .callai-hero-copy h1 { max-width: 20ch; }
+  .callai-stage { order: -1; padding-top: 0.5rem; }
+  .callai-orb-wrap {
+    width: min(220px, 64vw);
+    height: min(220px, 64vw);
+  }
+}
+
+/* Operator catalog picks (Leyla / Samir) */
+.operator-picks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+.operator-pick {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+.operator-pick:hover { border-color: var(--accent, #3d8bfd); }
+.operator-pick.selected {
+  border-color: var(--accent, #3d8bfd);
+  background: rgba(61, 139, 253, 0.12);
+  box-shadow: 0 0 0 1px rgba(61, 139, 253, 0.35);
+}
+.operator-pick-name { font-size: 1.15rem; font-weight: 700; }
+.operator-pick-meta { font-size: 0.8rem; color: var(--muted); }

@@ -1,0 +1,14 @@
+node_modules
+dist
+.env
+.env.local
+server/.env
+apps/**/.env
+.DS_Store
+data/elevenlabs-agent.json
+*.log
+client/dist
+.next
+.turbo
+apps/**/dist
+apps/**/.next
