@@ -4,7 +4,12 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
-import { getBusinessTemplate, DEFAULT_VOICE } from "@aivoiceos/shared";
+import {
+  getBusinessTemplate,
+  buildCustomStarterPrompt,
+  CUSTOM_TEMPLATE_ID,
+  DEFAULT_VOICE,
+} from "@aivoiceos/shared";
 import { CreateProjectDto } from "./dto/create-project.dto";
 import { UpdateAgentDto } from "./dto/update-agent.dto";
 import type { ProjectStatus } from "@prisma/client";
@@ -36,19 +41,40 @@ export class ProjectsService {
   }
 
   async create(organizationId: string, dto: CreateProjectDto) {
-    const template = getBusinessTemplate(dto.businessTemplate);
-    if (!template) throw new BadRequestException("Naməlum biznes şablonu");
+    let businessTemplate: string;
+    let businessLabel: string;
+    let persona: string;
+    let prompt: string;
+
+    if (dto.businessTemplate === CUSTOM_TEMPLATE_ID) {
+      const customType = (dto.customType || "").trim();
+      if (!customType) {
+        throw new BadRequestException("Xüsusi biznes üçün biznes növünü yazın");
+      }
+      businessTemplate = CUSTOM_TEMPLATE_ID;
+      businessLabel = customType;
+      persona = `${customType} operatoru`;
+      prompt = buildCustomStarterPrompt(customType);
+    } else {
+      const template = getBusinessTemplate(dto.businessTemplate);
+      if (!template) throw new BadRequestException("Naməlum biznes şablonu");
+      businessTemplate = template.id;
+      businessLabel = template.label;
+      persona = template.label;
+      prompt = template.starterPrompt;
+    }
 
     return this.prisma.project.create({
       data: {
         organizationId,
         name: dto.name,
-        businessTemplate: template.id,
+        businessTemplate,
+        businessLabel,
         status: "draft",
         agent: {
           create: {
-            persona: template.label,
-            prompt: template.starterPrompt,
+            persona,
+            prompt,
             language: "az",
             voiceProvider: DEFAULT_VOICE.provider,
             voiceId: DEFAULT_VOICE.voiceId,

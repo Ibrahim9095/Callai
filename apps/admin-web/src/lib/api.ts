@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000";
+// Always call the API same-origin ("/api/*"); Next.js rewrites proxy it to the
+// API server inside the VM. This works through any host (tunnel, preview,
+// localhost) and avoids the phone's own localhost being used.
 const TOKEN_KEY = "aivoiceos_token";
 
 export function getToken(): string | null {
@@ -24,7 +26,7 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_URL}/api${path}`, {
+  const res = await fetch(`/api${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -57,11 +59,12 @@ export const api = {
   templates: () => request<any[]>("/templates"),
   projects: () => request<any[]>("/projects"),
   project: (id: string) => request<any>(`/projects/${id}`),
-  createProject: (name: string, businessTemplate: string) =>
+  createProject: (name: string, businessTemplate: string, customType?: string) =>
     request<any>("/projects", {
       method: "POST",
-      body: JSON.stringify({ name, businessTemplate }),
+      body: JSON.stringify({ name, businessTemplate, ...(customType ? { customType } : {}) }),
     }),
+  deleteProject: (id: string) => request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
   updateAgent: (id: string, data: Record<string, unknown>) =>
     request<any>(`/projects/${id}/agent`, { method: "PATCH", body: JSON.stringify(data) }),
   setStatus: (id: string, status: string) =>

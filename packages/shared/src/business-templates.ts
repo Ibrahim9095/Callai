@@ -114,3 +114,21 @@ export function getBusinessTemplate(id: string): BusinessTemplate | undefined {
 export function listBusinessTemplates(): BusinessTemplate[] {
   return BUSINESS_TEMPLATES.map((id) => BUSINESS_TEMPLATE_REGISTRY[id]);
 }
+
+/** Sentinel id used when the operator defines a business not in the registry. */
+export const CUSTOM_TEMPLATE_ID = "custom";
+
+/** Any registry id OR "custom". */
+export function isValidTemplateSelection(id: string): boolean {
+  return id === CUSTOM_TEMPLATE_ID || BUSINESS_TEMPLATES.includes(id as BusinessTemplateId);
+}
+
+/**
+ * Build a starter agent prompt for a custom (free-text) business type, so any
+ * business can be onboarded from the panel. The operator can fully edit it after.
+ */
+export function buildCustomStarterPrompt(businessType: string): string {
+  const label = businessType.trim() || "biznes";
+  return `Sən "${label}" biznesinin telefon operatorusan. ${AZ_BASE_STYLE}
+Müştərilərə "${label}" sahəsində kömək et: sualları cavabla, xidmət və qiymətlər barədə məlumat ver, sifariş və ya növbə götür.`;
+}

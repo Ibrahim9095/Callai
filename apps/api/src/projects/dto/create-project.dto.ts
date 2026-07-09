@@ -1,5 +1,19 @@
-import { IsIn, IsString, MaxLength, MinLength } from "class-validator";
-import { BUSINESS_TEMPLATES, type BusinessTemplateId } from "@aivoiceos/shared";
+import { IsOptional, IsString, MaxLength, MinLength, Validate } from "class-validator";
+import { isValidTemplateSelection } from "@aivoiceos/shared";
+import {
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+} from "class-validator";
+
+@ValidatorConstraint({ name: "templateSelection", async: false })
+class TemplateSelection implements ValidatorConstraintInterface {
+  validate(value: string) {
+    return typeof value === "string" && isValidTemplateSelection(value);
+  }
+  defaultMessage() {
+    return "Naməlum biznes şablonu";
+  }
+}
 
 export class CreateProjectDto {
   @IsString()
@@ -7,6 +21,13 @@ export class CreateProjectDto {
   @MaxLength(120)
   name!: string;
 
-  @IsIn(BUSINESS_TEMPLATES as unknown as string[])
-  businessTemplate!: BusinessTemplateId;
+  /** Known template id (e.g. "hotel") or "custom". */
+  @Validate(TemplateSelection)
+  businessTemplate!: string;
+
+  /** Required when businessTemplate === "custom": free-text business type. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  customType?: string;
 }

@@ -6,6 +6,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 
 ## [Unreleased]
 
+### Added
+- Custom (free-text) business type when creating a project ("Digər") — any
+  business (e.g. "Təkər təmiri") can be onboarded; agent gets a generated AZ
+  starter prompt that is fully editable. Adds `Project.businessLabel`.
+- Delete project from the project detail page (removes it from the list).
+
 ### Notes
 - Provider decisions ADR-0003 (voice: Azure default + ElevenLabs premium) and
   ADR-0004 (telephony: local SIP/DIDWW for +994, browser calls for PoC) remain

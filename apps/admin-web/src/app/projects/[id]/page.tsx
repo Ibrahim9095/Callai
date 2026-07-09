@@ -22,6 +22,7 @@ export default function ProjectDetailPage() {
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -76,6 +77,19 @@ export default function ProjectDetailPage() {
     }
   }
 
+  async function removeProject() {
+    if (!window.confirm(`"${project.name}" layihəsi silinsin? Bu geri qaytarıla bilməz.`)) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await api.deleteProject(id);
+      router.replace("/projects");
+    } catch (e: any) {
+      setError(e.message);
+      setDeleting(false);
+    }
+  }
+
   if (loading) return <div className="center-screen muted">Yüklənir…</div>;
   if (!project) return <div className="center-screen error">{error || "Tapılmadı"}</div>;
 
@@ -98,6 +112,9 @@ export default function ProjectDetailPage() {
           </span>
           <button className="btn" onClick={toggleStatus}>
             {project.status === "active" ? "Dayandır" : "Aktiv et"}
+          </button>
+          <button className="btn danger" onClick={removeProject} disabled={deleting}>
+            {deleting ? "Silinir…" : "Sil"}
           </button>
         </div>
 

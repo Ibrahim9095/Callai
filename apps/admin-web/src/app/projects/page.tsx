@@ -10,9 +10,12 @@ type Project = {
   id: string;
   name: string;
   businessTemplate: string;
+  businessLabel?: string | null;
   status: "draft" | "active" | "paused";
   agent?: { active: boolean; voiceProvider: string; voiceId: string } | null;
 };
+
+const CUSTOM = "custom";
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -20,6 +23,7 @@ export default function ProjectsPage() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [name, setName] = useState("");
   const [tmpl, setTmpl] = useState("hotel");
+  const [customType, setCustomType] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -42,11 +46,16 @@ export default function ProjectsPage() {
   async function createProject(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    if (tmpl === CUSTOM && !customType.trim()) {
+      setError("Biznes növünü yazın (məs. Təkər təmiri)");
+      return;
+    }
     setCreating(true);
     try {
-      const p = await api.createProject(name.trim(), tmpl);
+      const p = await api.createProject(name.trim(), tmpl, tmpl === CUSTOM ? customType.trim() : undefined);
       setProjects((prev) => [p, ...prev]);
       setName("");
+      setCustomType("");
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -57,6 +66,10 @@ export default function ProjectsPage() {
   function logout() {
     clearToken();
     router.replace("/login");
+  }
+
+  function label(p: Project) {
+    return p.businessLabel || templates.find((t) => t.id === p.businessTemplate)?.label || p.businessTemplate;
   }
 
   return (
@@ -75,7 +88,8 @@ export default function ProjectsPage() {
         <section className="card">
           <h2 className="title" style={{ fontSize: "1.15rem" }}>Yeni layihə (biznes)</h2>
           <p className="muted" style={{ marginTop: 0 }}>
-            Biznes tipini seçin — agent avtomatik həmin sahə üçün qurulacaq.
+            Biznes tipini seçin — agent avtomatik həmin sahə üçün qurulacaq. Siyahıda yoxdursa
+            «Digər»i seçib özünüz yazın.
           </p>
           <form onSubmit={createProject} className="grid cols-2">
             <div>
@@ -95,8 +109,26 @@ export default function ProjectsPage() {
                 {templates.map((t) => (
                   <option key={t.id} value={t.id}>{t.label}</option>
                 ))}
+                <option value={CUSTOM}>Digər (özüm yazıram)…</option>
               </select>
             </div>
+
+            {tmpl === CUSTOM ? (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label htmlFor="customType">Biznes növü (manual)</label>
+                <input
+                  id="customType"
+                  value={customType}
+                  onChange={(e) => setCustomType(e.target.value)}
+                  placeholder="Məs. Təkər təmiri, Kondisioner servisi, Fotostudiya…"
+                />
+                <p className="hint">
+                  Agent bu sahə üçün ilkin təlimatla qurulacaq — sonra layihə səhifəsində promptu
+                  tam özünüzə uyğun dəyişə bilərsiniz.
+                </p>
+              </div>
+            ) : null}
+
             <div style={{ alignSelf: "end" }}>
               <button className="btn primary" disabled={creating}>
                 {creating ? "Yaradılır…" : "Layihə yarat"}
@@ -118,9 +150,7 @@ export default function ProjectsPage() {
                 <Link key={p.id} href={`/projects/${p.id}`} className="card item">
                   <div>
                     <h3>{p.name}</h3>
-                    <small>
-                      {templateLabel(templates, p.businessTemplate)} · səs: {p.agent?.voiceId || "—"}
-                    </small>
+                    <small>{label(p)} · səs: {p.agent?.voiceId || "—"}</small>
                   </div>
                   <span className={`pill ${p.status}`}>{statusLabel(p.status)}</span>
                 </Link>
@@ -133,9 +163,6 @@ export default function ProjectsPage() {
   );
 }
 
-function templateLabel(templates: Template[], id: string) {
-  return templates.find((t) => t.id === id)?.label || id;
-}
 function statusLabel(s: string) {
   return s === "active" ? "Aktiv" : s === "paused" ? "Dayandırılıb" : "Qaralama";
 }
