@@ -144,6 +144,8 @@ export const api = {
       model?: string;
       sttModel?: string;
       expiresAt?: number | string | null;
+      fallbackNotice?: string | null;
+      warning?: string | null;
     }>(`/projects/${pid}/voice/session`, { method: "POST", body: "{}" }),
   voiceSpeak: (pid: string, body: { text?: string }) =>
     request<{

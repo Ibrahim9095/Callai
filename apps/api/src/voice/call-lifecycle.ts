@@ -27,18 +27,19 @@ export const SOFT_TIMEOUT_FILLERS_AZ = ["Bir saniyə…"] as const;
 
 /**
  * Call-center TTS: loud, clear Bakı phonemes + fast first audio.
+ * Tuned for Hope (female) / Adam (male) on eleven_v3_conversational.
  */
 export const TTS_CALL_CENTER = {
-  /** Clear phone pace — slightly slower than before for cleaner AZ phonemes */
-  speed: 0.98,
-  /** Lower = more expressive Bakı intonation */
-  stability: 0.28,
-  /** Keep voice identity strong */
-  similarity_boost: 0.9,
-  /** Snappy first byte */
-  optimize_streaming_latency: 4,
+  /** Natural phone pace — clear AZ, not rushed */
+  speed: 1.0,
+  /** Balanced: expressive but stable (less robotic / less chaotic) */
+  stability: 0.4,
+  /** Strong voice identity for Hope/Adam */
+  similarity_boost: 0.85,
+  /** Fast first byte for snappy operator replies */
+  optimize_streaming_latency: 3,
   /** Client playback gain */
-  playbackVolume: 1.45,
+  playbackVolume: 1.4,
 } as const;
 
 /**

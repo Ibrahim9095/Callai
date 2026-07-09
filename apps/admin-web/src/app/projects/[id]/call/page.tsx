@@ -1,13 +1,12 @@
 /**
- * CallAI voice call UI — Edge Neural pipeline (fallback when ElevenLabs quota is exhausted).
+ * CallAI live call — ElevenLabs v3 Conversational (WebSocket signed URL).
  *
- * Transport: pipeline
- *   STT  = Web Speech API (az-AZ)
- *   LLM  = OpenAI gpt-4o-mini + knowledge tools
- *   TTS  = Microsoft Edge neural (Banu/Babek) — free
+ * Prefer websocket over LiveKit WebRTC: after first_message the agent can leave
+ * the LiveKit room and DataChannel errors kill the session. WebSocket stays up
+ * until the user hangs up.
  *
- * When ElevenLabs Free credits remain, API may still return websocket; this page
- * currently runs the reliable pipeline path so calls never die after greeting.
+ * Voices: Hope (female / Leyla) + Adam (male / Samir) via eleven_v3_conversational.
+ * If API returns Edge pipeline (quota empty), show a clear error to refresh key.
  */
 
 "use client";
@@ -15,7 +14,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { Conversation } from "@elevenlabs/client";
 import { api, getToken } from "@/lib/api";
+
+const TOOL_NAMES = [
+  "list_collections",
+  "search_records",
+  "create_record",
+  "update_record",
+  "delete_record",
+] as const;
 
 type Phase =
   | "idle"
@@ -24,10 +32,16 @@ type Phase =
   | "thinking"
   | "speaking"
   | "tool"
+  | "live"
   | "error";
 
 type Line = { id: string; role: "user" | "assistant" | "system"; text: string };
-type HistoryItem = { role: "user" | "assistant"; content: string };
+type ToolRow = {
+  id: string;
+  name: string;
+  status: "running" | "done" | "error";
+  args?: Record<string, unknown>;
+};
 
 const STATUS_LABELS: Record<Phase, string> = {
   idle: "Hazır",
@@ -36,15 +50,23 @@ const STATUS_LABELS: Record<Phase, string> = {
   thinking: "Bir saniyə…",
   speaking: "Danışır…",
   tool: "Yoxlayır…",
+  live: "Xəttdəsiniz — danışın",
   error: "Xəta",
 };
 
-const BARGE_ACK = [
-  "Buyurun, sizi dinləyirəm.",
-  "Bəli, buyurun.",
-  "Aydındır, davam edin.",
-  "Başa düşdüm.",
-];
+/**
+ * Barge-in: mic stays OPEN while the operator speaks so ElevenLabs can
+ * hear the caller and stop TTS. Local gate only tracks speech for UI.
+ */
+const BARGE_IN_GATE = {
+  speechLevelThreshold: 0.12,
+  speechHoldMs: 180,
+  silenceReleaseMs: 220,
+  vadScoreThreshold: 0.45,
+} as const;
+
+/** Louder playback — Hope/Adam phone-operator presence */
+const PLAYBACK_VOLUME = 1.4;
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -59,53 +81,27 @@ function errMessage(err: unknown): string {
   return "Naməlum xəta";
 }
 
-function getSpeechRecognitionCtor(): (new () => SpeechRecognition) | null {
-  if (typeof window === "undefined") return null;
-  const w = window as Window & {
-    SpeechRecognition?: new () => SpeechRecognition;
-    webkitSpeechRecognition?: new () => SpeechRecognition;
-  };
-  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
+function isSoftVoiceError(message: string): boolean {
+  const m = (message || "").trim();
+  if (!m || m === "{}" || m === "[object Object]") return true;
+  return (
+    /unknown error/i.test(m) ||
+    /error_type/i.test(m) ||
+    /datachannel/i.test(m) ||
+    /^server error:\s*unknown error/i.test(m) ||
+    /^server error:\s*\{\s*\}$/i.test(m)
+  );
 }
 
-async function playBase64Audio(
-  audioBase64: string,
-  mimeType: string,
-  audioRef: { current: HTMLAudioElement | null },
-  onPlaying?: () => void,
-): Promise<"finished" | "interrupted"> {
-  if (!audioBase64) return "finished";
-  if (audioRef.current) {
-    audioRef.current.pause();
-    audioRef.current.src = "";
-    audioRef.current = null;
-  }
-  const bytes = Uint8Array.from(atob(audioBase64), (c) => c.charCodeAt(0));
-  const blob = new Blob([bytes], { type: mimeType || "audio/mpeg" });
-  const url = URL.createObjectURL(blob);
-  const audio = new Audio(url);
-  audioRef.current = audio;
-  onPlaying?.();
-
-  return new Promise<"finished" | "interrupted">((resolve) => {
-    let settled = false;
-    const finish = (result: "finished" | "interrupted") => {
-      if (settled) return;
-      settled = true;
-      URL.revokeObjectURL(url);
-      if (audioRef.current === audio) audioRef.current = null;
-      resolve(result);
-    };
-    audio.onended = () => finish("finished");
-    audio.onerror = () => finish("finished");
-    audio.onpause = () => {
-      // Barge-in pauses/stops mid-play
-      if (!audio.ended && audio.currentTime > 0 && audio.paused) {
-        finish("interrupted");
-      }
-    };
-    void audio.play().catch(() => finish("finished"));
-  });
+function labelTool(name: string) {
+  const map: Record<string, string> = {
+    list_collections: "Kolleksiyalar",
+    search_records: "Axtarış",
+    create_record: "Cədvələ yazma",
+    update_record: "Cədvəl düzəlişi",
+    delete_record: "Cədvəldən silmə",
+  };
+  return map[name] || name;
 }
 
 export default function TestCallPage() {
@@ -118,31 +114,38 @@ export default function TestCallPage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
+  const [tools, setTools] = useState<ToolRow[]>([]);
   const [muted, setMuted] = useState(false);
   const [level, setLevel] = useState(0);
-  const [engineLabel, setEngineLabel] = useState("edge_neural");
+  const [engineLabel, setEngineLabel] = useState("elevenlabs");
+  const [modelLabel, setModelLabel] = useState("");
   const [connected, setConnected] = useState(false);
-  const [interim, setInterim] = useState("");
 
   const logRef = useRef<HTMLDivElement | null>(null);
   const aliveRef = useRef(true);
   const inCallRef = useRef(false);
   const sessionGenerationRef = useRef(0);
-  const historyRef = useRef<HistoryItem[]>([]);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const playbackRef = useRef<HTMLAudioElement | null>(null);
-  const processingRef = useRef(false);
-  const mutedRef = useRef(false);
-  const speakingRef = useRef(false);
-  const bargeInRef = useRef(false);
-  const pendingFinalRef = useRef("");
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const micStreamRef = useRef<MediaStream | null>(null);
+  const conversationRef = useRef<Awaited<
+    ReturnType<typeof Conversation.startSession>
+  > | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
   const meterCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef(0);
-  const handleUtteranceRef = useRef<(generation: number, text: string) => Promise<void>>(
-    async () => undefined,
-  );
+  const mutedRef = useRef(false);
+  const intentionalHangupRef = useRef(false);
+  /** True while ElevenLabs agent is producing speech */
+  const agentSpeakingRef = useRef(false);
+  /** Mic currently open for barge-in (only while agent speaking) */
+  const bargeOpenRef = useRef(false);
+  /**
+   * Protect the first greeting from echo/noise barge-in.
+   * Mic stays muted until the operator finishes the first spoken turn.
+   */
+  const greetingLockRef = useRef(true);
+  const speechAboveSinceRef = useRef<number | null>(null);
+  const speechBelowSinceRef = useRef<number | null>(null);
+  const lastVadScoreRef = useRef(0);
+  const levelRef = useRef(0);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -168,20 +171,86 @@ export default function TestCallPage() {
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [lines, interim]);
+  }, [lines, tools]);
 
-  const stopPlayback = useCallback(() => {
-    if (playbackRef.current) {
+  const applyMicTransmit = useCallback((transmit: boolean) => {
+    if (mutedRef.current || greetingLockRef.current || !transmit) {
       try {
-        playbackRef.current.pause();
-        playbackRef.current.src = "";
+        conversationRef.current?.setMicMuted?.(true);
       } catch {
         /* ignore */
       }
-      playbackRef.current = null;
+      localStreamRef.current?.getAudioTracks().forEach((t) => {
+        t.enabled = false;
+      });
+      return;
     }
-    speakingRef.current = false;
+    try {
+      conversationRef.current?.setMicMuted?.(false);
+    } catch {
+      /* ignore */
+    }
+    localStreamRef.current?.getAudioTracks().forEach((t) => {
+      t.enabled = true;
+    });
   }, []);
+
+  const setAgentSpeaking = useCallback(
+    (speaking: boolean) => {
+      agentSpeakingRef.current = speaking;
+      bargeOpenRef.current = false;
+      speechAboveSinceRef.current = null;
+      speechBelowSinceRef.current = null;
+
+      if (speaking) {
+        // While operator speaks: mute mic during greeting lock; after that allow barge-in
+        if (greetingLockRef.current) {
+          applyMicTransmit(false);
+        } else {
+          // Post-greeting: keep mic open so caller can interrupt
+          applyMicTransmit(true);
+        }
+        return;
+      }
+
+      // Operator finished a turn — unlock greeting and open mic for the caller
+      if (greetingLockRef.current) {
+        greetingLockRef.current = false;
+      }
+      applyMicTransmit(true);
+    },
+    [applyMicTransmit],
+  );
+
+  const evaluateBargeInGate = useCallback(() => {
+    if (!agentSpeakingRef.current || mutedRef.current || greetingLockRef.current) return;
+
+    const now = performance.now();
+    const level = levelRef.current;
+    const vad = lastVadScoreRef.current;
+    const loudEnough =
+      level >= BARGE_IN_GATE.speechLevelThreshold ||
+      vad >= BARGE_IN_GATE.vadScoreThreshold;
+
+    if (loudEnough) {
+      speechBelowSinceRef.current = null;
+      if (speechAboveSinceRef.current == null) speechAboveSinceRef.current = now;
+      const held = now - speechAboveSinceRef.current;
+      if (!bargeOpenRef.current && held >= BARGE_IN_GATE.speechHoldMs) {
+        bargeOpenRef.current = true;
+        applyMicTransmit(true);
+      }
+    } else {
+      speechAboveSinceRef.current = null;
+      if (bargeOpenRef.current) {
+        if (speechBelowSinceRef.current == null) speechBelowSinceRef.current = now;
+        if (now - speechBelowSinceRef.current >= BARGE_IN_GATE.silenceReleaseMs) {
+          bargeOpenRef.current = false;
+          speechBelowSinceRef.current = null;
+        }
+      }
+    }
+  }, [applyMicTransmit]);
 
   const stopMeter = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -190,84 +259,18 @@ export default function TestCallPage() {
       void meterCtxRef.current.close().catch(() => undefined);
       meterCtxRef.current = null;
     }
+    levelRef.current = 0;
     setLevel(0);
   }, []);
 
-  const stopMic = useCallback(() => {
-    stopMeter();
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((t) => t.stop());
-      micStreamRef.current = null;
-    }
-  }, [stopMeter]);
-
-  const stopRecognition = useCallback(() => {
-    const rec = recognitionRef.current;
-    recognitionRef.current = null;
-    if (rec) {
-      try {
-        rec.onresult = null;
-        rec.onerror = null;
-        rec.onend = null;
-        rec.abort();
-      } catch {
-        /* ignore */
-      }
-    }
-    if (silenceTimerRef.current) {
-      clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = null;
-    }
-    pendingFinalRef.current = "";
-    setInterim("");
-  }, []);
-
-  const hangup = useCallback(async () => {
-    inCallRef.current = false;
-    sessionGenerationRef.current += 1;
-    stopRecognition();
-    stopPlayback();
-    stopMic();
-    setConnected(false);
-    setMuted(false);
-    mutedRef.current = false;
-    speakingRef.current = false;
-    bargeInRef.current = false;
-    processingRef.current = false;
-    setPhase("idle");
-    setInterim("");
-  }, [stopMic, stopPlayback, stopRecognition]);
-
-  useEffect(() => {
-    return () => {
-      aliveRef.current = false;
-      inCallRef.current = false;
-      sessionGenerationRef.current += 1;
-      try {
-        recognitionRef.current?.abort();
-      } catch {
-        /* ignore */
-      }
-      if (playbackRef.current) playbackRef.current.pause();
-      cancelAnimationFrame(rafRef.current);
-      if (meterCtxRef.current) void meterCtxRef.current.close().catch(() => undefined);
-      if (micStreamRef.current) micStreamRef.current.getTracks().forEach((t) => t.stop());
-    };
-  }, []);
-
-  function pushLine(line: Omit<Line, "id">) {
-    if (!aliveRef.current) return;
-    setLines((prev) => [...prev.slice(-40), { ...line, id: uid() }]);
-  }
-
-  /** Soft visual meter from the SAME mic stream used for permission (not exclusive lock). */
-  const startMeterFromStream = useCallback(
+  const startMeter = useCallback(
     (stream: MediaStream) => {
       stopMeter();
       try {
         const Ctx =
           window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          (window as unknown as { webkitAudioContext: typeof AudioContext })
+            .webkitAudioContext;
         const ctx = new Ctx();
         meterCtxRef.current = ctx;
         if (ctx.state === "suspended") void ctx.resume();
@@ -279,7 +282,9 @@ export default function TestCallPage() {
         const tick = () => {
           analyser.getByteFrequencyData(data);
           const avg = data.reduce((a, b) => a + b, 0) / data.length / 255;
+          levelRef.current = avg;
           setLevel(avg);
+          evaluateBargeInGate();
           rafRef.current = requestAnimationFrame(tick);
         };
         tick();
@@ -287,222 +292,122 @@ export default function TestCallPage() {
         /* optional */
       }
     },
-    [stopMeter],
+    [evaluateBargeInGate, stopMeter],
   );
 
-  const interruptSpeaking = useCallback(() => {
-    if (!speakingRef.current && !playbackRef.current) return;
-    bargeInRef.current = true;
-    stopPlayback();
-    speakingRef.current = false;
-    if (aliveRef.current) setPhase("listening");
-  }, [stopPlayback]);
+  const pushLine = useCallback((line: Omit<Line, "id">) => {
+    if (!aliveRef.current) return;
+    setLines((prev) => [...prev.slice(-40), { ...line, id: uid() }]);
+  }, []);
 
-  const flushPendingUtterance = useCallback(
-    (generation: number) => {
-      const text = pendingFinalRef.current.trim();
-      pendingFinalRef.current = "";
-      setInterim("");
-      if (!text) return;
-      if (!inCallRef.current || sessionGenerationRef.current !== generation) return;
-      if (processingRef.current || mutedRef.current) return;
-      void handleUtteranceRef.current(generation, text);
-    },
-    [],
-  );
-
-  const startListening = useCallback(
-    (generation: number) => {
-      if (!inCallRef.current || sessionGenerationRef.current !== generation) return;
-      if (mutedRef.current) {
-        if (aliveRef.current) setPhase("listening");
-        return;
-      }
-      // Already running
-      if (recognitionRef.current) {
-        if (aliveRef.current && !speakingRef.current && !processingRef.current) {
-          setPhase("listening");
-        }
-        return;
-      }
-
-      const Ctor = getSpeechRecognitionCtor();
-      if (!Ctor) {
-        setError("Brauzer nitq tanımanı dəstəkləmir. Chrome / Edge istifadə edin.");
-        setPhase("error");
-        return;
-      }
-
-      const rec = new Ctor();
-      recognitionRef.current = rec;
-      rec.lang = "az-AZ";
-      rec.continuous = true;
-      rec.interimResults = true;
-      rec.maxAlternatives = 1;
-
-      rec.onresult = (event: SpeechRecognitionEvent) => {
-        if (!inCallRef.current || sessionGenerationRef.current !== generation) return;
-        if (mutedRef.current || processingRef.current) return;
-
-        let interimText = "";
-        let finalChunk = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const r = event.results[i];
-          const t = (r[0]?.transcript || "").trim();
-          if (!t) continue;
-          if (r.isFinal) finalChunk += (finalChunk ? " " : "") + t;
-          else interimText += (interimText ? " " : "") + t;
-        }
-
-        // Barge-in: any speech while AI talks → stop TTS immediately
-        if ((interimText || finalChunk) && speakingRef.current) {
-          interruptSpeaking();
-        }
-
-        if (interimText) setInterim(interimText);
-
-        if (finalChunk) {
-          pendingFinalRef.current = `${pendingFinalRef.current} ${finalChunk}`.trim();
-          setInterim("");
-          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-          // Short pause after final → send turn (allows multi-phrase)
-          silenceTimerRef.current = setTimeout(() => {
-            flushPendingUtterance(generation);
-          }, 650);
-        }
-      };
-
-      rec.onerror = (ev: SpeechRecognitionErrorEvent) => {
-        if (ev.error === "no-speech" || ev.error === "aborted") return;
-        if (ev.error === "not-allowed") {
-          setError("Mikrofon icazəsi lazımdır. Brauzerdə mikrofonu açın.");
-          setPhase("error");
-          inCallRef.current = false;
-          setConnected(false);
-          return;
-        }
-        // network / other — soft restart below via onend
-      };
-
-      rec.onend = () => {
-        recognitionRef.current = null;
-        if (
-          inCallRef.current &&
-          sessionGenerationRef.current === generation &&
-          !mutedRef.current
-        ) {
-          // Keep STT alive for the whole call
-          setTimeout(() => {
-            if (
-              inCallRef.current &&
-              sessionGenerationRef.current === generation &&
-              !recognitionRef.current
-            ) {
-              startListening(generation);
-            }
-          }, 120);
-        }
-      };
-
-      try {
-        rec.start();
-        if (aliveRef.current && !speakingRef.current && !processingRef.current) {
-          setPhase("listening");
-        }
-      } catch (e: unknown) {
-        recognitionRef.current = null;
-        // InvalidStateError = already started — ignore
-        const msg = errMessage(e);
-        if (!/already started|InvalidState/i.test(msg)) {
-          setError(msg || "Dinləmə başladıla bilmədi");
-          setPhase("error");
-        }
-      }
-    },
-    [flushPendingUtterance, interruptSpeaking],
-  );
-
-  handleUtteranceRef.current = async (generation: number, userText: string) => {
-    if (processingRef.current) return;
-    if (!inCallRef.current || sessionGenerationRef.current !== generation) return;
-    processingRef.current = true;
-    bargeInRef.current = false;
-    stopPlayback();
-    speakingRef.current = false;
-    pushLine({ role: "user", text: userText });
-    setPhase("thinking");
-    setInterim("");
-
+  const endConversation = useCallback(async () => {
+    const conv = conversationRef.current;
+    conversationRef.current = null;
+    if (!conv) return;
     try {
-      const result = await api.voiceTurn(pid, {
-        userText,
-        history: historyRef.current,
-      });
-      if (sessionGenerationRef.current !== generation || !inCallRef.current) return;
-
-      historyRef.current = [
-        ...historyRef.current.slice(-10),
-        { role: "user", content: userText },
-        { role: "assistant", content: result.replyText },
-      ];
-      pushLine({ role: "assistant", text: result.replyText });
-      setPhase("speaking");
-      speakingRef.current = true;
-      bargeInRef.current = false;
-
-      // Keep STT running during TTS for barge-in
-      startListening(generation);
-
-      const outcome = await playBase64Audio(
-        result.audioBase64,
-        result.mimeType,
-        playbackRef,
-        () => {
-          speakingRef.current = true;
-        },
-      );
-
-      speakingRef.current = false;
-      if (outcome === "interrupted" && bargeInRef.current) {
-        // Optional soft ack is skipped — user is already speaking; wait for their final
-        if (aliveRef.current) setPhase("listening");
-      } else if (inCallRef.current && sessionGenerationRef.current === generation) {
-        setPhase("listening");
-      }
-    } catch (e: unknown) {
-      speakingRef.current = false;
-      if (sessionGenerationRef.current === generation && aliveRef.current) {
-        pushLine({ role: "system", text: `Cavab alınmadı: ${errMessage(e)}` });
-        setPhase("listening");
-      }
-    } finally {
-      processingRef.current = false;
-      if (inCallRef.current && sessionGenerationRef.current === generation) {
-        startListening(generation);
-      }
+      await conv.endSession?.();
+    } catch {
+      /* ignore */
     }
-  };
+  }, []);
 
-  async function startCall() {
-    processingRef.current = false;
+  const hangup = useCallback(async () => {
+    intentionalHangupRef.current = true;
+    inCallRef.current = false;
     sessionGenerationRef.current += 1;
-    const generation = sessionGenerationRef.current;
-    historyRef.current = [];
-    pendingFinalRef.current = "";
-    bargeInRef.current = false;
-    speakingRef.current = false;
-
-    stopRecognition();
-    stopPlayback();
-    stopMic();
-    setError("");
-    setLines([]);
+    agentSpeakingRef.current = false;
+    bargeOpenRef.current = false;
+    greetingLockRef.current = true;
+    speechAboveSinceRef.current = null;
+    speechBelowSinceRef.current = null;
+    lastVadScoreRef.current = 0;
+    stopMeter();
+    await endConversation();
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+    setConnected(false);
     setMuted(false);
     mutedRef.current = false;
+    setPhase("idle");
+  }, [endConversation, stopMeter]);
+
+  useEffect(() => {
+    return () => {
+      aliveRef.current = false;
+      inCallRef.current = false;
+      sessionGenerationRef.current += 1;
+      stopMeter();
+      const conv = conversationRef.current;
+      conversationRef.current = null;
+      if (conv) void conv.endSession?.().catch(() => undefined);
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, [stopMeter]);
+
+  function buildClientTools(generation: number) {
+    const tools: Record<
+      string,
+      (params?: Record<string, unknown>) => Promise<string>
+    > = {};
+    for (const name of TOOL_NAMES) {
+      tools[name] = async (params = {}) => {
+        if (!aliveRef.current || sessionGenerationRef.current !== generation) {
+          return JSON.stringify({ error: "Sessiya bitib" });
+        }
+        const toolId = uid();
+        setTools((prev) => [
+          ...prev.slice(-19),
+          { id: toolId, name, status: "running", args: params },
+        ]);
+        setPhase("tool");
+        try {
+          const result = await api.voiceTool(pid, name, params || {});
+          setTools((prev) =>
+            prev.map((t) => (t.id === toolId ? { ...t, status: "done" as const } : t)),
+          );
+          if (aliveRef.current && sessionGenerationRef.current === generation) {
+            setPhase("live");
+          }
+          return typeof result === "string" ? result : JSON.stringify(result ?? { ok: true });
+        } catch (e: unknown) {
+          setTools((prev) =>
+            prev.map((t) => (t.id === toolId ? { ...t, status: "error" as const } : t)),
+          );
+          if (aliveRef.current && sessionGenerationRef.current === generation) {
+            setPhase("live");
+          }
+          return JSON.stringify({ error: errMessage(e) });
+        }
+      };
+    }
+    return tools;
+  }
+
+  async function startCall() {
+    intentionalHangupRef.current = false;
+    inCallRef.current = false;
+    stopMeter();
+    await endConversation();
+    localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    localStreamRef.current = null;
+
+    sessionGenerationRef.current += 1;
+    const generation = sessionGenerationRef.current;
+
+    setError("");
+    setLines([]);
+    setTools([]);
+    setMuted(false);
+    mutedRef.current = false;
+    agentSpeakingRef.current = false;
+    bargeOpenRef.current = false;
+    greetingLockRef.current = true;
+    speechAboveSinceRef.current = null;
+    speechBelowSinceRef.current = null;
+    lastVadScoreRef.current = 0;
     setPhase("connecting");
     setConnected(true);
-    setInterim("");
-    pushLine({ role: "system", text: "Zəng bağlanır…" });
+    pushLine({ role: "system", text: "ElevenLabs v3 qoşulur…" });
 
     try {
       const p = await api.project(pid);
@@ -514,101 +419,175 @@ export default function TestCallPage() {
         setError(
           p.status === "draft"
             ? "Bu layihə hələ aktiv deyil. Admin paneldən «Aktiv et» basın."
-            : "Bu layihə müvəqqəti deaktiv edilib. Zəng qəbul olunmur.",
+            : "Bu layihə müvəqqəti deaktiv edilib.",
         );
         setPhase("error");
         setConnected(false);
         return;
       }
-    } catch (e: unknown) {
-      setError(errMessage(e) || "Layihə yüklənmədi");
-      setPhase("error");
-      setConnected(false);
-      return;
-    }
-
-    if (!getSpeechRecognitionCtor()) {
-      setError("Nitq tanıma üçün Chrome və ya Edge brauzeri lazımdır.");
-      setPhase("error");
-      setConnected(false);
-      return;
-    }
-
-    try {
-      // Single mic permission — keep stream alive for meter; STT uses browser speech service
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      micStreamRef.current = stream;
-      startMeterFromStream(stream);
 
       const session = await api.voiceSession(pid);
       if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
 
-      // Always use pipeline speak/turn here — ElevenLabs Free quota kills live Agents mid-call
-      const spokenGreeting = String(session.firstMessage || "").trim();
-      if (session.userPrompt && spokenGreeting === session.userPrompt.trim()) {
-        throw new Error("Salamlama konfiqurasiya xətası — User Prompt səslənməməlidir.");
-      }
-
       setOperatorName(session.operatorName || operatorName);
       setBusinessLabel(session.companyName || session.businessLabel || businessLabel);
       setProjectName(session.projectName || projectName);
-      setEngineLabel(session.engine || session.provider || "edge_neural");
-      const notice = (session as { fallbackNotice?: string; warning?: string }).fallbackNotice
-        || (session as { warning?: string }).warning;
-      if (notice) {
-        pushLine({ role: "system", text: notice });
-      } else if ((session.engine || session.provider) === "edge_neural") {
+      setEngineLabel(session.engine || session.provider || "elevenlabs");
+      setModelLabel(session.model || "eleven_v3_conversational");
+
+      if (session.fallbackNotice || session.warning) {
         pushLine({
           role: "system",
-          text: "Ehtiyat rejim: Edge Neural (ElevenLabs kredit bitibsə avtomatik). Danışın — operator cavab verəcək.",
+          text: String(session.fallbackNotice || session.warning),
         });
       }
 
-      inCallRef.current = true;
+      // Quota empty → API returns Edge pipeline. Prefer Agents when signed URL exists.
+      const signedUrl = session.signedUrl as string | undefined;
+      const conversationToken =
+        (session.token as string | undefined) ||
+        (session.value as string | undefined) ||
+        undefined;
 
-      // Start STT BEFORE greeting so barge-in works from the first second
-      startListening(generation);
-
-      if (spokenGreeting) {
-        pushLine({ role: "assistant", text: spokenGreeting });
-        historyRef.current = [{ role: "assistant", content: spokenGreeting }];
+      if (
+        !signedUrl &&
+        !conversationToken &&
+        (session.transport === "pipeline" || session.engine === "edge_neural")
+      ) {
+        throw new Error(
+          session.fallbackNotice ||
+            "ElevenLabs kredit bitib — ehtiyat rejim. Yeni API açarı əlavə edib səhifəni yeniləyin.",
+        );
       }
 
-      setPhase("speaking");
-      speakingRef.current = true;
-      const spoken = await api.voiceSpeak(pid, { text: spokenGreeting });
-      if (sessionGenerationRef.current !== generation || !inCallRef.current) return;
+      if (!signedUrl && !conversationToken) {
+        throw new Error(
+          "ElevenLabs sessiya alınmadı. ELEVENLABS_API_KEY və VOICE_PROVIDER=elevenlabs yoxlayın.",
+        );
+      }
 
-      const outcome = await playBase64Audio(
-        spoken.audioBase64,
-        spoken.mimeType,
-        playbackRef,
-        () => {
-          speakingRef.current = true;
+      try {
+        const localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            // Prefer less AGC boost of quiet noise while operator speaks
+            autoGainControl: false,
+          },
+        });
+        localStreamRef.current = localStream;
+        startMeter(localStream);
+      } catch {
+        /* SDK requests mic */
+      }
+
+      const sessionOpts = signedUrl
+        ? {
+            signedUrl,
+            connectionType: "websocket" as const,
+          }
+        : {
+            conversationToken: conversationToken!,
+            connectionType: "webrtc" as const,
+          };
+
+      conversationRef.current = await Conversation.startSession({
+        ...sessionOpts,
+        clientTools: buildClientTools(generation),
+        onConnect: () => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          inCallRef.current = true;
+          greetingLockRef.current = true;
+          setPhase("live");
+          try {
+            conversationRef.current?.setVolume?.({ volume: PLAYBACK_VOLUME });
+          } catch {
+            /* ignore */
+          }
+          // Mute mic until greeting finishes — prevents echo cutting "Salam… King Oteldən…"
+          applyMicTransmit(false);
+          pushLine({
+            role: "system",
+            text: "Zəng açıldı — salamdan sonra danışa bilərsiniz",
+          });
+          if (session.firstMessage) {
+            pushLine({ role: "assistant", text: String(session.firstMessage) });
+          }
         },
-      );
-      speakingRef.current = false;
-
-      if (sessionGenerationRef.current !== generation || !inCallRef.current) return;
-      if (outcome === "interrupted") {
-        setPhase("listening");
-      } else {
-        setPhase("listening");
-        startListening(generation);
-      }
+        onDisconnect: (details?: {
+          reason?: string;
+          context?: { type?: string; reason?: string };
+        }) => {
+          if (sessionGenerationRef.current !== generation) return;
+          inCallRef.current = false;
+          conversationRef.current = null;
+          if (!aliveRef.current) return;
+          setConnected(false);
+          setPhase("idle");
+          const reason = details?.reason || details?.context?.type || "";
+          pushLine({
+            role: "system",
+            text: intentionalHangupRef.current
+              ? "Zəngi bitirdiniz"
+              : reason === "agent"
+                ? "Sessiya gözlənilmədən bağlandı — yenidən «Zəngi başlat» basın"
+                : "Bağlantı kəsildi — yenidən «Zəngi başlat» basın",
+          });
+        },
+        onError: (err: unknown) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          const message = typeof err === "string" ? err : errMessage(err);
+          if (isSoftVoiceError(message)) {
+            console.debug("Soft voice error (ignored):", message);
+            return;
+          }
+          setError(message);
+          setPhase("error");
+        },
+        onModeChange: ({ mode }) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          if (mode === "speaking") {
+            setAgentSpeaking(true);
+            setPhase("speaking");
+          } else if (mode === "listening") {
+            setAgentSpeaking(false);
+            setPhase("listening");
+          } else {
+            setAgentSpeaking(false);
+            setPhase("live");
+          }
+        },
+        onVadScore: ({ vadScore }) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          lastVadScoreRef.current = Number(vadScore) || 0;
+          evaluateBargeInGate();
+        },
+        onInterruption: () => {
+          // Real barge-in accepted by ElevenLabs — treat as listening
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          setAgentSpeaking(false);
+          setPhase("listening");
+        },
+        onMessage: (message) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          const role = message?.source === "user" ? "user" : "assistant";
+          const text = String(
+            message?.message || (message as { text?: string })?.text || "",
+          ).trim();
+          if (text) pushLine({ role, text });
+        },
+      });
     } catch (e: unknown) {
       inCallRef.current = false;
-      stopRecognition();
-      stopMic();
       setConnected(false);
-      setError(errMessage(e) || "Zəng başladılmadı");
+      const msg = errMessage(e);
+      setError(
+        isSoftVoiceError(msg)
+          ? "Səs bağlantısı alınmadı. Səhifəni yeniləyib yenidən yoxlayın."
+          : msg || "Zəng başladılmadı",
+      );
       setPhase("error");
+      await hangup();
     }
   }
 
@@ -617,21 +596,20 @@ export default function TestCallPage() {
     setMuted(next);
     mutedRef.current = next;
     if (next) {
-      stopRecognition();
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    } else if (inCallRef.current) {
-      startListening(sessionGenerationRef.current);
+      applyMicTransmit(false);
+      return;
     }
+    applyMicTransmit(true);
   }
 
-  const live = connected && phase !== "error";
+  const live = connected && phase !== "error" && phase !== "idle";
   const ringScale = 1 + level * 0.55;
   const speakingLabel =
-    phase === "speaking"
-      ? `${operatorName} danışır…`
-      : interim
-        ? "Sizi eşidir…"
-        : STATUS_LABELS[phase];
+    phase === "speaking" ? `${operatorName} danışır…` : STATUS_LABELS[phase];
+  const engineDisplay =
+    engineLabel === "elevenlabs"
+      ? `ElevenLabs v3${modelLabel ? ` · ${modelLabel}` : ""}`
+      : `${engineLabel}${modelLabel ? ` · ${modelLabel}` : ""}`;
 
   return (
     <div className="callai-page">
@@ -641,9 +619,7 @@ export default function TestCallPage() {
       <header className="callai-topbar">
         <div className="callai-brand-mark">AI Voice OS</div>
         <div className="callai-top-meta">
-          <span className="ok">
-            {engineLabel === "edge_neural" ? "Neural AZ · hazır" : `${engineLabel} · hazır`}
-          </span>
+          <span className="ok">{engineDisplay}</span>
           <Link href={`/projects/${pid}`} className="callai-back">
             ← Layihə
           </Link>
@@ -655,8 +631,8 @@ export default function TestCallPage() {
           <p className="callai-brand-hero">CallAI</p>
           <h1>{businessLabel || projectName || "Operator xətti"}</h1>
           <p className="callai-lede">
-            {operatorName} ilə telefon kimi danışın. Danışanda AI dərhal dayanır (barge-in).
-            Mikrofon Chrome/Edge-də açıq olmalıdır.
+            {operatorName} ilə real vaxtda danışın — Bakı azərbaycanlısı kimi təbii səs.
+            Operator danışarkən yalnız aydın nitq kəsir (fon/küy yox).
           </p>
 
           <div className="callai-cta-row">
@@ -682,23 +658,14 @@ export default function TestCallPage() {
         <section className="callai-stage" aria-label="Səsli agent">
           <div className="callai-orb-wrap">
             <div className="callai-orb-ring" style={{ transform: `scale(${ringScale})` }} />
-            <div
-              className={`callai-orb ${phase}`}
-              data-live={live && phase !== "idle" ? "true" : "false"}
-            >
+            <div className={`callai-orb ${phase}`} data-live={live ? "true" : "false"}>
               <span className="callai-orb-core" />
             </div>
           </div>
           <p className="callai-status-line">{speakingLabel}</p>
-          {interim ? (
-            <p className="callai-agent-name" style={{ fontStyle: "italic", opacity: 0.85 }}>
-              «{interim}»
-            </p>
-          ) : (
-            <p className="callai-agent-name">
-              {operatorName} · {projectName || businessLabel || "AI Voice OS"}
-            </p>
-          )}
+          <p className="callai-agent-name">
+            {operatorName} · {projectName || businessLabel || "AI Voice OS"}
+          </p>
         </section>
       </main>
 
@@ -708,7 +675,7 @@ export default function TestCallPage() {
           <div className="callai-log" ref={logRef}>
             {lines.length === 0 ? (
               <p className="callai-empty">
-                Zəngi başladın və mikrofonla danışın. Transkript burada görünəcək.
+                Zəngi başladın. Transkript burada görünəcək.
               </p>
             ) : (
               lines.map((t) => (
@@ -726,20 +693,34 @@ export default function TestCallPage() {
         <div className="callai-panel callai-tools-panel">
           <h2>Operator hərəkətləri</h2>
           <div className="callai-log">
-            <p className="callai-empty">
-              Barge-in aktivdir: danışanda AI dayanır. İfadələr: «{BARGE_ACK[0]}»
-            </p>
+            {tools.length === 0 ? (
+              <p className="callai-empty">
+                Axtarış və data alətləri burada izlənir.
+              </p>
+            ) : (
+              tools.map((t) => (
+                <div key={t.id} className={`callai-tool-row ${t.status}`}>
+                  <div className="callai-tool-head">
+                    <strong>{labelTool(t.name)}</strong>
+                    <span>{t.status}</span>
+                  </div>
+                  {t.args && Object.keys(t.args).length > 0 ? (
+                    <pre>{JSON.stringify(t.args)}</pre>
+                  ) : null}
+                </div>
+              ))
+            )}
           </div>
           <div className="callai-store-chip">
             <span>{projectName || "Layihə"}</span>
             <span>{businessLabel || "Operator xətti"}</span>
-            <span>{operatorName} · neural AZ · barge-in</span>
+            <span>{operatorName} · ElevenLabs v3 · sabit barge-in</span>
           </div>
         </div>
       </section>
 
       <footer className="callai-foot">
-        <p>{projectName || "AI Voice OS"} · Azərbaycan dili · satış və operator xətti</p>
+        <p>{projectName || "AI Voice OS"} · Azərbaycan dili · ElevenLabs v3</p>
       </footer>
     </div>
   );

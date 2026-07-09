@@ -68,28 +68,29 @@ export function elevenLlm(): string {
   return (process.env.ELEVENLABS_LLM || "gpt-4o-mini").trim();
 }
 
-/** Jessica — bright warm conversational (Leyla / Bakı phone). Override via env. */
+/** Hope — upbeat clear female (Leyla / Bakı phone). Override via env. */
 export function elevenVoiceFemale(): string {
   return (
     process.env.ELEVENLABS_VOICE_ID ||
     process.env.ELEVENLABS_VOICE_ID_FEMALE ||
-    "cgSgspJ2msm6clMCkdW9"
+    "tnSpp4vdxKPjI9w0GnoV"
   ).trim();
 }
 
-/** Mark — natural conversational male (Samir). Override via env. */
+/** Adam — natural male (Samir). Override via env. */
 export function elevenVoiceMale(): string {
-  return (process.env.ELEVENLABS_VOICE_ID_MALE || "UgBBYS2sOqTuMpoF3BR0").trim();
+  return (process.env.ELEVENLABS_VOICE_ID_MALE || "wBXNqKUATyqu0RtYt25i").trim();
 }
 
 /** Legacy / other-account voice ids that must be remapped on this workspace. */
 const LEGACY_VOICE_REMAP: Record<string, "female" | "male"> = {
   // Fili — not available on current ElevenLabs account
   FDs1ZX5J4e4f2c2erxtW: "female",
-  // Previous Bella default on this account — remap to Jessica conversational
+  // Previous Bella / Jessica / Mark defaults — remap to Hope / Adam
   hpp4J3VqNfWAUOO0d1Us: "female",
-  // Previous Chris default — remap to Mark natural conversations
+  cgSgspJ2msm6clMCkdW9: "female",
   iP95p4xoKVk53GoZ742B: "male",
+  UgBBYS2sOqTuMpoF3BR0: "male",
 };
 
 export function resolveElevenVoiceId(opts: {
@@ -414,26 +415,46 @@ export class ElevenLabsV3VoiceProvider implements VoiceProvider {
     if (!text) {
       return { audioBase64: "", mimeType: "audio/mpeg", provider: this.id };
     }
-    const voiceId = resolveElevenVoiceId({ voiceId: req.voiceId });
+    let voiceId = resolveElevenVoiceId({ voiceId: req.voiceId });
     // Use multilingual v2 for one-shot speak (v3 conversational is agent-only)
     const model = (process.env.ELEVENLABS_SPEAK_MODEL || "eleven_multilingual_v2").trim();
-    const res = await fetch(`${ELEVEN_API}/text-to-speech/${voiceId}`, {
-      method: "POST",
-      headers: headers(),
-      body: JSON.stringify({
-        text,
-        model_id: model,
-        voice_settings: {
-          stability: TTS_CALL_CENTER.stability,
-          similarity_boost: TTS_CALL_CENTER.similarity_boost,
-          style: 0.35,
-          use_speaker_boost: true,
-        },
-      }),
-    });
+    const voiceSettings = {
+      stability: TTS_CALL_CENTER.stability,
+      similarity_boost: TTS_CALL_CENTER.similarity_boost,
+      style: 0.35,
+      use_speaker_boost: true,
+    };
+
+    const synthesize = async (vid: string) =>
+      fetch(`${ELEVEN_API}/text-to-speech/${vid}`, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify({
+          text,
+          model_id: model,
+          voice_settings: voiceSettings,
+        }),
+      });
+
+    let res = await synthesize(voiceId);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(formatError(err) || `ElevenLabs TTS xətası (${res.status})`);
+      const msg = formatError(err) || `ElevenLabs TTS xətası (${res.status})`;
+      // Free plan: library voices (Hope/Adam) blocked on TTS API — Agents still OK.
+      // Fall back to premade Sarah/Adam-equivalent for speak/preview only.
+      if (/paid_plan_required|library voices/i.test(msg)) {
+        const premade =
+          voiceId === elevenVoiceMale()
+            ? process.env.ELEVENLABS_SPEAK_FALLBACK_MALE || "pNInz6obpgDQGcFmaJgB" // Adam premade
+            : process.env.ELEVENLABS_SPEAK_FALLBACK_FEMALE || "EXAVITQu4vr4xnSDxMaL"; // Sarah
+        console.warn("[elevenlabs.speak] library voice blocked on Free — premade fallback:", premade);
+        voiceId = premade;
+        res = await synthesize(voiceId);
+      }
+      if (!res.ok) {
+        const err2 = await res.json().catch(() => ({}));
+        throw new Error(formatError(err2) || msg);
+      }
     }
     const buf = Buffer.from(await res.arrayBuffer());
     return {

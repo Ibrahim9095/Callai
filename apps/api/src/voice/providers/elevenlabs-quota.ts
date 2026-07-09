@@ -1,18 +1,30 @@
 /**
  * Detect ElevenLabs Free-tier quota exhaustion so we can fall back to Edge TTS.
  * Recent conversations often terminate with "exceeds your quota limit".
+ *
+ * Note: Free plan cannot use Voice Library voices (Hope/Adam) via standalone TTS API
+ * (`paid_plan_required`) — that is NOT a quota failure. Agents WebSocket still works
+ * with those voices. Probe must use a premade voice (e.g. Sarah).
  */
 
 const ELEVEN_API = "https://api.elevenlabs.io/v1";
 
+/** Premade voice safe for Free-tier TTS probe (Sarah). */
+const QUOTA_PROBE_VOICE = "EXAVITQu4vr4xnSDxMaL";
+
 export function isQuotaErrorMessage(msg: string): boolean {
   const m = (msg || "").toLowerCase();
+  // Library-voice paywall is not credit exhaustion
+  if (/paid_plan_required/i.test(m) || /library voices/i.test(m)) {
+    return false;
+  }
   return (
     /quota/i.test(m) ||
     /credits remaining/i.test(m) ||
     /exceeds your quota/i.test(m) ||
     /payment_required/i.test(m) ||
-    /free_user.*limit/i.test(m)
+    /free_user.*limit/i.test(m) ||
+    /character.?limit/i.test(m)
   );
 }
 
@@ -33,7 +45,11 @@ export async function elevenLabsQuotaAvailable(apiKey: string): Promise<{
     });
     if (res.ok) {
       const data = (await res.json()) as {
-        conversations?: Array<{ status?: string; termination_reason?: string; start_time_unix_secs?: number }>;
+        conversations?: Array<{
+          status?: string;
+          termination_reason?: string;
+          start_time_unix_secs?: number;
+        }>;
       };
       const recent = data.conversations || [];
       const now = Math.floor(Date.now() / 1000);
@@ -50,12 +66,9 @@ export async function elevenLabsQuotaAvailable(apiKey: string): Promise<{
     /* ignore — fall through to TTS probe */
   }
 
-  // 2) Tiny TTS probe (1–2 chars) — definitive credit check
+  // 2) Tiny TTS probe with a Free-tier premade voice — definitive credit check
   try {
-    const voice =
-      process.env.ELEVENLABS_VOICE_ID_FEMALE ||
-      process.env.ELEVENLABS_VOICE_ID ||
-      "cgSgspJ2msm6clMCkdW9";
+    const voice = (process.env.ELEVENLABS_QUOTA_PROBE_VOICE || QUOTA_PROBE_VOICE).trim();
     const model = (process.env.ELEVENLABS_SPEAK_MODEL || "eleven_multilingual_v2").trim();
     const res = await fetch(`${ELEVEN_API}/text-to-speech/${voice}`, {
       method: "POST",
@@ -78,7 +91,7 @@ export async function elevenLabsQuotaAvailable(apiKey: string): Promise<{
     if (isQuotaErrorMessage(String(msg))) {
       return { ok: false, reason: String(msg) };
     }
-    // Other errors (model access etc.) — still try Agents path
+    // Other errors (model access, library voice, etc.) — still try Agents path
     return { ok: true, reason: `probe_non_quota:${res.status}` };
   } catch (e: any) {
     return { ok: true, reason: `probe_error:${e?.message || e}` };
