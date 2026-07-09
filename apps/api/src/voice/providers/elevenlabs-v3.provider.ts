@@ -79,13 +79,31 @@ export function elevenVoiceMale(): string {
   return (process.env.ELEVENLABS_VOICE_ID_MALE || "iP95p4xoKVk53GoZ742B").trim();
 }
 
+/** Legacy / other-account voice ids that must be remapped on this workspace. */
+const LEGACY_VOICE_REMAP: Record<string, "female" | "male"> = {
+  // Fili — not available on current ElevenLabs account
+  FDs1ZX5J4e4f2c2erxtW: "female",
+};
+
 export function resolveElevenVoiceId(opts: {
   voiceId?: string | null;
   gender?: "female" | "male" | "unknown" | null;
 }): string {
   const v = (opts.voiceId || "").trim();
-  // Already an ElevenLabs voice id (20+ alnum)
-  if (/^[a-zA-Z0-9]{20,}$/.test(v)) return v;
+  const female = elevenVoiceFemale();
+  const male = elevenVoiceMale();
+
+  // Remap voices that belong to another ElevenLabs account / plan
+  const legacy = LEGACY_VOICE_REMAP[v];
+  if (legacy === "male") return male;
+  if (legacy === "female") return female;
+
+  // Already a current catalog / env voice
+  if (v === female || v === male) return v;
+
+  // Other ElevenLabs voice ids (20+ alnum) — keep as-is
+  if (/^[a-zA-Z0-9]{20,}$/.test(v) && !LEGACY_VOICE_REMAP[v]) return v;
+
   const lower = v.toLowerCase();
   if (
     lower.includes("babek") ||
@@ -94,25 +112,21 @@ export function resolveElevenVoiceId(opts: {
     lower.includes("samir") ||
     opts.gender === "male"
   ) {
-    return elevenVoiceMale();
+    return male;
   }
-  return elevenVoiceFemale();
+  return female;
 }
 
 function pronunciationDicts(): Array<{ pronunciation_dictionary_id: string; version_id: string }> {
   const raw = process.env.ELEVENLABS_PRONUNCIATION_DICTS;
-  if (raw) {
-    try {
-      return JSON.parse(raw);
-    } catch {
-      /* fall through */
-    }
+  if (!raw || !raw.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    console.warn("[elevenlabs] ELEVENLABS_PRONUNCIATION_DICTS JSON parse failed — ignoring");
+    return [];
   }
-  // Optional AZ pronunciation dictionaries (from legacy CallAI setup)
-  return [
-    { pronunciation_dictionary_id: "rCWIsh6cYwgR2B88Hpd2", version_id: "7U8dBrhdNlgAMgmkjxHH" },
-    { pronunciation_dictionary_id: "ggRxGFUnujM55sB47Nm0", version_id: "nmRvAkwN0zgJSeNxdb1S" },
-  ];
 }
 
 function headers() {
@@ -218,6 +232,30 @@ function buildAgentBody(spec: VoiceAgentSpec) {
 
   const speedRaw = Number(process.env.ELEVENLABS_TTS_SPEED || String(TTS_CALL_CENTER.speed));
   const speed = Number.isFinite(speedRaw) ? Math.min(1.2, Math.max(0.7, speedRaw)) : TTS_CALL_CENTER.speed;
+  const dicts = pronunciationDicts();
+
+  const tts: Record<string, unknown> = {
+    voice_id: voiceId,
+    model_id: elevenTtsModel(),
+    expressive_mode: true,
+    stability: TTS_CALL_CENTER.stability,
+    similarity_boost: TTS_CALL_CENTER.similarity_boost,
+    speed,
+    optimize_streaming_latency: TTS_CALL_CENTER.optimize_streaming_latency,
+    agent_output_audio_format: "pcm_16000",
+    suggested_audio_tags: [
+      { tag: "warmly", description: "Mehriban Bakı salamı, təşəkkür" },
+      { tag: "friendly", description: "Səmimi söhbət və məsləhət" },
+      { tag: "laughs", description: "Yumşaq gülüş — yalnız yerində" },
+      { tag: "chuckles", description: "Yüngül təbəssüm" },
+      { tag: "thinking", description: "Məlumata baxarkən" },
+      { tag: "confident", description: "Tövsiyə və təsdiq" },
+      { tag: "sighs", description: "Empatiya / üzr" },
+    ],
+  };
+  if (dicts.length > 0) {
+    tts.pronunciation_dictionary_locators = dicts;
+  }
 
   return {
     name: `AI Voice OS — ${spec.projectName} — ${spec.persona}`.slice(0, 80),
@@ -228,26 +266,7 @@ function buildAgentBody(spec: VoiceAgentSpec) {
         disable_first_message_interruptions: false,
         prompt: promptBlock,
       },
-      tts: {
-        voice_id: voiceId,
-        model_id: elevenTtsModel(),
-        expressive_mode: true,
-        stability: TTS_CALL_CENTER.stability,
-        similarity_boost: TTS_CALL_CENTER.similarity_boost,
-        speed,
-        optimize_streaming_latency: TTS_CALL_CENTER.optimize_streaming_latency,
-        agent_output_audio_format: "pcm_16000",
-        pronunciation_dictionary_locators: pronunciationDicts(),
-        suggested_audio_tags: [
-          { tag: "warmly", description: "Mehriban Bakı salamı, təşəkkür" },
-          { tag: "friendly", description: "Səmimi söhbət və məsləhət" },
-          { tag: "laughs", description: "Yumşaq gülüş — yalnız yerində" },
-          { tag: "chuckles", description: "Yüngül təbəssüm" },
-          { tag: "thinking", description: "Məlumata baxarkən" },
-          { tag: "confident", description: "Tövsiyə və təsdiq" },
-          { tag: "sighs", description: "Empatiya / üzr" },
-        ],
-      },
+      tts,
       asr: {
         quality: "high",
         provider: "scribe_realtime",
