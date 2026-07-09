@@ -65,24 +65,28 @@ export function elevenLlm(): string {
   return (process.env.ELEVENLABS_LLM || "gemini-2.5-flash").trim();
 }
 
-/** Bella — professional warm female (Leyla). Override via env. */
+/** Jessica — bright warm conversational (Leyla / Bakı phone). Override via env. */
 export function elevenVoiceFemale(): string {
   return (
     process.env.ELEVENLABS_VOICE_ID ||
     process.env.ELEVENLABS_VOICE_ID_FEMALE ||
-    "hpp4J3VqNfWAUOO0d1Us"
+    "cgSgspJ2msm6clMCkdW9"
   ).trim();
 }
 
-/** Chris — charming conversational male (Samir). Override via env. */
+/** Mark — natural conversational male (Samir). Override via env. */
 export function elevenVoiceMale(): string {
-  return (process.env.ELEVENLABS_VOICE_ID_MALE || "iP95p4xoKVk53GoZ742B").trim();
+  return (process.env.ELEVENLABS_VOICE_ID_MALE || "UgBBYS2sOqTuMpoF3BR0").trim();
 }
 
 /** Legacy / other-account voice ids that must be remapped on this workspace. */
 const LEGACY_VOICE_REMAP: Record<string, "female" | "male"> = {
   // Fili — not available on current ElevenLabs account
   FDs1ZX5J4e4f2c2erxtW: "female",
+  // Previous Bella default on this account — remap to Jessica conversational
+  hpp4J3VqNfWAUOO0d1Us: "female",
+  // Previous Chris default — remap to Mark natural conversations
+  iP95p4xoKVk53GoZ742B: "male",
 };
 
 export function resolveElevenVoiceId(opts: {
@@ -205,6 +209,7 @@ function buildAgentBody(spec: VoiceAgentSpec) {
         "manat",
         "sifariş",
         "rezerv",
+        "rezervasiya",
         "buyurun",
         "əlbəttə",
         "xahiş",
@@ -215,9 +220,20 @@ function buildAgentBody(spec: VoiceAgentSpec) {
         "həkim",
         "klinika",
         "müştəri",
+        "gözəllik",
+        "otel",
+        "otaq",
+        "qiymət",
+        "endirim",
+        "zəhmət olmasa",
+        "sağ olun",
+        "təşəkkür",
+        "aydındır",
+        "başa düşdüm",
+        "narahat olmayın",
       ].filter(Boolean),
     ),
-  ).slice(0, 40);
+  ).slice(0, 50);
 
   const promptBlock: Record<string, unknown> = {
     prompt: spec.systemPrompt,

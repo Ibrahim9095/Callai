@@ -29,16 +29,16 @@ export interface VoiceOption {
 export const VOICE_CATALOG: VoiceOption[] = [
   {
     provider: "elevenlabs",
-    voiceId: "hpp4J3VqNfWAUOO0d1Us",
-    label: "Leyla (ElevenLabs v3, qadın) — Bella",
+    voiceId: "cgSgspJ2msm6clMCkdW9",
+    label: "Leyla (ElevenLabs v3, qadın) — Jessica",
     gender: "female",
     language: "az",
     premium: true,
   },
   {
     provider: "elevenlabs",
-    voiceId: "iP95p4xoKVk53GoZ742B",
-    label: "Samir (ElevenLabs v3, kişi) — Chris",
+    voiceId: "UgBBYS2sOqTuMpoF3BR0",
+    label: "Samir (ElevenLabs v3, kişi) — Mark",
     gender: "male",
     language: "az",
     premium: true,
@@ -94,7 +94,7 @@ export function resolveElevenLabsVoiceId(opts: {
     lower.includes("male") ||
     lower.includes("samir") ||
     opts.gender === "male";
-  return wantMale ? "iP95p4xoKVk53GoZ742B" : "hpp4J3VqNfWAUOO0d1Us";
+  return wantMale ? "UgBBYS2sOqTuMpoF3BR0" : "cgSgspJ2msm6clMCkdW9";
 }
 
 /** Resolve OpenAI Realtime voice id from catalog / gender. */
@@ -145,7 +145,8 @@ export function voiceGenderFromCatalog(voiceId?: string | null): "female" | "mal
     v.includes("babek") ||
     v.includes("cedar") ||
     v.includes("male") ||
-    v === "ip95p4xokvk53goz742b"
+    v === "ip95p4xokvk53goz742b" ||
+    v === "ugbbys2soqtumpof3br0"
   ) {
     return "male";
   }
@@ -153,6 +154,7 @@ export function voiceGenderFromCatalog(voiceId?: string | null): "female" | "mal
     v.includes("banu") ||
     v.includes("marin") ||
     v.includes("female") ||
+    v === "cgsgspj2msm6clmckdw9" ||
     v === "hpp4j3vqnfwauoo0d1us" ||
     v === "fds1zx5j4e4f2c2erxtw"
   ) {

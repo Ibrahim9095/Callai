@@ -72,8 +72,9 @@ ${user}
     VOICE_RUNTIME_RULES,
     `SƏNİN ADIN: «${input.persona}». ŞİRKƏT: «${input.companyName}». Başqa ad demə.`,
     "ZƏNGİ HEÇ VAXT KƏSMƏ. end_call YOXDUR. Salamdan sonra dinlə. Yalnız müştəri bitirir.",
-    "Danışığı təbii call-center tempində apar — sözlər arasında süni uzun pauza qoyma.",
-    "Cavablar QISA: 1–2 cümlə, aydın, peşəkar.",
+    "Danışığı təbii Bakı call-center tempində apar — sözlər arasında süni uzun pauza qoyma.",
+    "Cavablar QISA: 1–2 cümlə, aydın, peşəkar, yalnız Azərbaycan dili (Bakı).",
+    "Tələffüz: əsl Bakı — türkcə söz və aksent QADAĞANDIR.",
   ]
     .filter(Boolean)
     .join("\n\n");

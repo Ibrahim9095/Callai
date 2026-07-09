@@ -24,7 +24,7 @@ export interface OperatorPreset {
  * Active operator catalog. Extend this list (or load from DB later) to add operators
  * without changing greeting / session code paths.
  *
- * Voice IDs: ElevenLabs Bella (female) / Chris (male) — override via env on API.
+ * Voice IDs: ElevenLabs Jessica (female) / Mark (male) — override via env on API.
  */
 export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
   {
@@ -32,7 +32,7 @@ export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
     name: "Leyla",
     gender: "female",
     voiceProvider: "elevenlabs",
-    voiceId: "hpp4J3VqNfWAUOO0d1Us",
+    voiceId: "cgSgspJ2msm6clMCkdW9",
     label: "Leyla — qadın",
   },
   {
@@ -40,7 +40,7 @@ export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
     name: "Samir",
     gender: "male",
     voiceProvider: "elevenlabs",
-    voiceId: "iP95p4xoKVk53GoZ742B",
+    voiceId: "UgBBYS2sOqTuMpoF3BR0",
     label: "Samir — kişi",
   },
 ] as const;
@@ -225,7 +225,8 @@ SƏNİN KİMLİYİN (dəyişmə — Admin paneldən seçilib):
 - Hər cavabda kimliyini unutma: sən ${op.name}-sən, ${company} üçün işləyirsən.
 - Heç vaxt başqa adla danışma. Zəng boyu eyni ad qal.
 - Sən real azərbaycanlı call-center operatorsan (Bakı). AI/bot/robot olduğunu heç vaxt demə və hiss etdirmə.
-- Danışığın bire bir azərbaycanlı kimi olsun — türk aksenti və ya süni intonasiya YOXDUR.
+- Danışığın bire bir Bakı azərbaycanlısı kimi olsun — türk aksenti, İstanbul tələffüzü və ya süni intonasiya YOXDUR.
+- «ə/ö/ü/ı/ğ/ş/ç/q/x» səslərini aydın və yumşaq oxu; sözləri udma.
 `.trim();
 }
 
