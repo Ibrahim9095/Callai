@@ -616,30 +616,32 @@ export class KnowledgeService {
   async agentCreateRecord(
     organizationId: string,
     projectId: string,
-    opts: { collection: string; data: Record<string, unknown> },
+    opts: { collection?: string; data: Record<string, unknown> },
   ) {
     await this.assertProject(organizationId, projectId);
-    if (!opts.collection) {
-      return { ok: false, message: "Hansı siyahıya yazılacağını deyin (məs. Rezervlər)" };
-    }
     const all = await this.prisma.collection.findMany({ where: { projectId } });
-    const want = this.normalize(opts.collection);
-    const collection =
-      all.find(
-        (c) =>
-          this.normalize(c.name) === want ||
-          this.normalize(c.label) === want ||
-          c.id === opts.collection,
-      ) ||
-      all.find(
-        (c) => this.normalize(c.name).includes(want) || this.normalize(c.label).includes(want),
-      );
+    if (all.length === 0) {
+      return { ok: false, message: "Layihədə heç bir cədvəl/fayl yoxdur. Əvvəl Excel yükləyin." };
+    }
 
+    let collection = null as (typeof all)[number] | null;
+    const want = opts.collection ? this.normalize(opts.collection) : "";
+    if (want) {
+      collection =
+        all.find(
+          (c) =>
+            this.normalize(c.name) === want ||
+            this.normalize(c.label) === want ||
+            c.id === opts.collection ||
+            this.normalize(c.name).includes(want) ||
+            this.normalize(c.label).includes(want),
+        ) || null;
+    }
+    // Smart default: Rezervlər / Sifarişlər / first collection
     if (!collection) {
-      return {
-        ok: false,
-        message: `Siyahı tapılmadı. Mövcud: ${all.map((c) => c.label).join(", ") || "yoxdur"}`,
-      };
+      collection =
+        all.find((c) => /rezerv|sifaris|order|appointment|novbe|booking/.test(this.normalize(c.label + " " + c.name))) ||
+        all[0];
     }
 
     // Ensure phone + arrival-time columns exist so agent data is not dropped
@@ -671,49 +673,59 @@ export class KnowledgeService {
       clean[idField.key] = `R${String(maxN + 1).padStart(3, "0")}`;
     }
 
-    // Require at least a guest/name-like value so empty rows are not saved
     const guestField =
       fields.find((f) => ["qonaq", "guest", "musteri", "customer", "name"].includes(this.normalize(f.key))) ||
       fields.find((f) => /qonaq|guest|musteri|customer|ad/.test(this.normalize(f.label || "")));
-    if (guestField && (clean[guestField.key] == null || String(clean[guestField.key]).trim() === "")) {
-      return {
-        ok: false,
-        message:
-          "Rezerv yazılmadı: qonaq adı yoxdur. Müştəridən ad-soyad alın və create_record-u yenidən çağırın.",
-        missing: [guestField.key],
-      };
-    }
-
     const phoneField =
       fields.find((f) => ["telefon", "phone", "tel", "nomre"].includes(this.normalize(f.key))) ||
       fields.find((f) => /telefon|phone|nomre/.test(this.normalize(f.label || "")));
-    if (phoneField && (clean[phoneField.key] == null || String(clean[phoneField.key]).trim() === "")) {
+
+    const hasGuest =
+      guestField && clean[guestField.key] != null && String(clean[guestField.key]).trim() !== "";
+    const hasPhone =
+      phoneField && clean[phoneField.key] != null && String(clean[phoneField.key]).trim() !== "";
+
+    // Must have at least a name OR phone — otherwise refuse empty rows
+    if (!hasGuest && !hasPhone) {
       return {
         ok: false,
         message:
-          "Rezerv yazılmadı: telefon yoxdur. Müştəridən nömrəni alın və create_record-u yenidən çağırın.",
-        missing: [phoneField.key],
-        partial: clean,
+          "Rezerv yazılmadı: ad və telefon boşdur. Müştəridən ad-soyad və nömrə alın, create_record-u yenidən çağırın.",
+        missing: [guestField?.key, phoneField?.key].filter(Boolean),
+        receivedKeys: Object.keys(opts.data || {}),
       };
+    }
+
+    // Prefer complete rows; still SAVE partial so admin panel always shows what agent captured
+    if (statusField && (!hasGuest || !hasPhone)) {
+      clean[statusField.key] = "natamam";
     }
 
     const record = await this.prisma.collectionRecord.create({
       data: { collectionId: collection.id, projectId, data: clean as object },
     });
+
+    const spokenConfirmHint = [
+      hasGuest ? `Qonaq: ${clean[guestField!.key]}` : null,
+      hasPhone ? `Telefon: ${clean[phoneField!.key]}` : null,
+      clean.gelis_saati ? `Gəliş: ${clean.gelis_saati}` : null,
+      clean.giris ? `Giriş: ${clean.giris}` : null,
+      clean.otaq_novu ? `Otaq: ${clean.otaq_novu}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
+
+    const complete = Boolean(hasGuest && hasPhone);
     return {
       ok: true,
-      message: `«${collection.label}» siyahısına əlavə olundu. Müştəriyə yalnız bu yazılanları təsdiq et.`,
+      complete,
+      message: complete
+        ? `«${collection.label}» cədvəlinə yazıldı. Admin paneldə görünür. Müştəriyə yalnız bunları təsdiq et: ${spokenConfirmHint}`
+        : `«${collection.label}» cədvəlinə QISMƏN yazıldı (${spokenConfirmHint || "natamam"}). Əksik sahəni alıb update_record ilə tamamla.`,
       collection: collection.label,
       recordId: record.id,
       data: clean,
-      spokenConfirmHint: [
-        clean[guestField?.key || ""] ? `Qonaq: ${clean[guestField!.key]}` : null,
-        phoneField && clean[phoneField.key] ? `Telefon: ${clean[phoneField.key]}` : null,
-        clean.gelis_saati ? `Gəliş: ${clean.gelis_saati}` : null,
-        clean.giris ? `Giriş: ${clean.giris}` : null,
-      ]
-        .filter(Boolean)
-        .join(", "),
+      spokenConfirmHint,
     };
   }
 
@@ -724,12 +736,16 @@ export class KnowledgeService {
     opts: { collection?: string; recordId: string; data: Record<string, unknown> },
   ) {
     await this.assertProject(organizationId, projectId);
+    if (!opts.recordId) {
+      return { ok: false, message: "recordId lazımdır — əvvəl search_records ilə tapın" };
+    }
     const record = await this.prisma.collectionRecord.findFirst({
       where: { id: opts.recordId, projectId },
       include: { collection: true },
     });
     if (!record) return { ok: false, message: "Sətir tapılmadı" };
-    const fields = record.collection.fields as unknown as FieldDef[];
+    let fields = record.collection.fields as unknown as FieldDef[];
+    fields = await this.ensureContactFields(record.collectionId, fields);
     const merged = {
       ...(record.data as object),
       ...this.coerce(fields, opts.data || {}),
@@ -740,10 +756,34 @@ export class KnowledgeService {
     });
     return {
       ok: true,
-      message: "Yeniləndi",
+      message: `«${record.collection.label}» sətri yeniləndi — admin paneldə görünür`,
       collection: record.collection.label,
       recordId: updated.id,
       data: updated.data,
+    };
+  }
+
+  /** Delete a record from the project table. */
+  async agentDeleteRecord(
+    organizationId: string,
+    projectId: string,
+    opts: { recordId: string; collection?: string },
+  ) {
+    await this.assertProject(organizationId, projectId);
+    if (!opts.recordId) {
+      return { ok: false, message: "recordId lazımdır — əvvəl search_records ilə tapın" };
+    }
+    const record = await this.prisma.collectionRecord.findFirst({
+      where: { id: opts.recordId, projectId },
+      include: { collection: true },
+    });
+    if (!record) return { ok: false, message: "Sətir tapılmadı" };
+    await this.prisma.collectionRecord.delete({ where: { id: record.id } });
+    return {
+      ok: true,
+      message: `«${record.collection.label}» siyahısından silindi`,
+      collection: record.collection.label,
+      recordId: opts.recordId,
     };
   }
 }

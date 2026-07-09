@@ -223,4 +223,18 @@ export const AZ_ASR_KEYWORDS = [
   "iyul",
   "avqust",
   "sentyabr",
+  // Common AZ names — boost ASR for guest identity
+  "Əli",
+  "Aysel",
+  "Murad",
+  "Nigar",
+  "Kamran",
+  "Rəşad",
+  "Leyla",
+  "Samir",
+  "Məmmədov",
+  "Əliyeva",
+  "Həsənov",
+  "Quliyeva",
+  "İsmayılov",
 ] as const;

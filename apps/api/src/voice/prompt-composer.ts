@@ -85,7 +85,8 @@ ${user}
     "Danışığı təbii Bakı call-center tempində apar — uzun monoloq və süni pauza YOX.",
     "Tələffüz: GÜCLÜ Bakı azərbaycanlısı — türkcə aksent QADAĞANDIR. Hərfləri udma. AI/bot olduğunu demə.",
     "Tarix: ili iki dəfə demə; sadəcə «iyulun üçü» kimi de. Cədvələ müştərinin gəliş vaxtını yaz.",
-    "Məlumat: uydurma YOX. Cədvəl adı fərqli olsa belə içini oxu. create_record ok:true olmadan «rezerv olundu» demə.",
+    "Məlumat: uydurma YOX. Cədvəl adı fərqli olsa belə içini oxu.",
+    "Rezerv: create_record mütləq çağırılmalıdır; ok:true olmadan «qeydə alındı» demə. Səhv varsa update_record, silmək üçün delete_record.",
   ]
     .filter(Boolean)
     .join("\n\n");

@@ -8,6 +8,7 @@ export const AGENT_TOOL_NAMES = [
   "search_records",
   "create_record",
   "update_record",
+  "delete_record",
 ] as const;
 
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
@@ -56,42 +57,75 @@ export const AGENT_TOOLS = [
     type: "function" as const,
     name: "create_record",
     description:
-      "Yeni rezerv / sifariş yaz — MƏCBURİ. Əvvəl müştəridən BİR CÜMLƏDƏ: «Zəhmət olmasa adınızı, soyadınızı və nömrənizi qeyd edin.» Saatlıq otaqsa gəliş saatını; gecəlik/günlükdürsə «Nə vaxt gələcəksiniz?» soruş. Sonra create_record. data: qonaq/ad, telefon, gelis_saati, giris, cixis, otaq_novu, status. Yazmadan «rezerv olundu» demə.",
+      "Yeni rezerv/sifarişi ADMIN CƏDVƏLİNƏ yaz — MƏCBURİ. Müştəridən: «Zəhmət olmasa adınızı, soyadınızı və nömrənizi qeyd edin.» + gəliş vaxtı. Sonra BU aləti çağır. Parametrlər: collection=«Rezervlər», qonaq/ad, soyad, telefon, gelis_saati və ya giris, otaq_novu. Nested data OLMASA da olar — sahələri birbaşa göndər. Alət ok:true qaytarmadan «rezerv olundu» demə.",
     parameters: {
       type: "object",
       properties: {
         collection: {
           type: "string",
-          description: "Hansı siyahıya yazılsın (məs: Rezervlər, Sifarişlər)",
+          description: "Hansı siyahı (məs: Rezervlər). Boşdursa sistem avtomatik tapır.",
         },
         data: {
           type: "object",
-          description:
-            "Sətir: qonaq (və ya ad+soyad), telefon, gelis_saati (saatlıq), giris/cixis (gecəlik), otaq_novu, status, qeyd",
+          description: "Sətir obyekti (opsional — sahələr yuxarıda da ola bilər)",
           additionalProperties: true,
         },
+        qonaq: { type: "string", description: "Ad soyad" },
+        ad: { type: "string", description: "Ad" },
+        soyad: { type: "string", description: "Soyad" },
+        telefon: { type: "string", description: "Telefon nömrəsi" },
+        phone: { type: "string", description: "Telefon (alias)" },
+        gelis_saati: { type: "string", description: "Gəliş saati" },
+        saat: { type: "string", description: "Saat (alias)" },
+        giris: { type: "string", description: "Giriş tarixi" },
+        cixis: { type: "string", description: "Çıxış tarixi" },
+        otaq_novu: { type: "string", description: "Otaq növü" },
+        status: { type: "string", description: "Status" },
+        qeyd: { type: "string", description: "Qeyd" },
       },
-      required: ["collection", "data"],
-      additionalProperties: false,
+      additionalProperties: true,
     },
   },
   {
     type: "function" as const,
     name: "update_record",
     description:
-      "Mövcud sətri yenilə (rezerv dəyişikliyi və ya ləğv). Əvvəl search_records ilə recordId tap. Ləğv üçün status sahəsini «Ləğv edildi» et.",
+      "Mövcud sətri DÜZƏLT (səhv ad, telefon, tarix, otaq və ya ləğv). Əvvəl search_records ilə recordId tap. data/sahələri göndər. Ləğv: status=«Ləğv edildi».",
     parameters: {
       type: "object",
       properties: {
-        recordId: { type: "string", description: "Yenilənəcək sətir ID" },
+        recordId: { type: "string", description: "Yenilənəcək sətir ID (search_records-dan)" },
         collection: { type: "string", description: "Siyahı adı (opsional)" },
         data: {
           type: "object",
-          description: "Dəyişəcək sahələr (status, tarix, telefon və s.)",
+          description: "Dəyişəcək sahələr",
           additionalProperties: true,
         },
+        qonaq: { type: "string" },
+        telefon: { type: "string" },
+        gelis_saati: { type: "string" },
+        giris: { type: "string" },
+        cixis: { type: "string" },
+        otaq_novu: { type: "string" },
+        status: { type: "string" },
+        qeyd: { type: "string" },
       },
-      required: ["recordId", "data"],
+      required: ["recordId"],
+      additionalProperties: true,
+    },
+  },
+  {
+    type: "function" as const,
+    name: "delete_record",
+    description:
+      "Sətri cədvəldən SİL. Əvvəl search_records ilə recordId tap. Yalnız müştəri silməyi təsdiqləyəndə çağır.",
+    parameters: {
+      type: "object",
+      properties: {
+        recordId: { type: "string", description: "Silinəcək sətir ID" },
+        collection: { type: "string", description: "Siyahı adı (opsional)" },
+      },
+      required: ["recordId"],
       additionalProperties: false,
     },
   },

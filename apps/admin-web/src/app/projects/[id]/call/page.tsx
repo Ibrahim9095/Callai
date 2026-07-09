@@ -21,6 +21,7 @@ const TOOL_NAMES = [
   "search_records",
   "create_record",
   "update_record",
+  "delete_record",
 ] as const;
 
 type Phase =
@@ -95,8 +96,9 @@ function labelTool(name: string) {
   const map: Record<string, string> = {
     list_collections: "Kolleksiyalar",
     search_records: "Axtarış",
-    create_record: "Yazı yaratma",
-    update_record: "Yazı yeniləmə",
+    create_record: "Cədvələ yazma",
+    update_record: "Cədvəl düzəlişi",
+    delete_record: "Cədvəldən silmə",
   };
   return map[name] || name;
 }

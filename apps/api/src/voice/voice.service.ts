@@ -16,6 +16,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { KnowledgeService } from "../knowledge/knowledge.service";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "./agent-tools";
 import {
+  normalizeCreateArgs,
+  normalizeDeleteArgs,
+  normalizeSearchArgs,
+  normalizeUpdateArgs,
+} from "./tool-args";
+import {
   inactiveProjectMessage,
   isProjectVoiceActive,
 } from "./call-lifecycle";
@@ -355,36 +361,41 @@ export class VoiceService {
     const project = await this.loadProject(organizationId, projectId);
     this.assertVoiceActive(project);
 
-    const args =
-      rawArgs.parameters && typeof rawArgs.parameters === "object"
-        ? (rawArgs.parameters as Record<string, unknown>)
-        : rawArgs;
-
     if (!AGENT_TOOL_NAMES.includes(name as AgentToolName)) {
       throw new NotFoundException(`Alət tapılmadı: ${name}`);
+    }
+
+    // Log raw tool args so we can diagnose ElevenLabs payload shapes
+    try {
+      console.log(
+        `[voice.tool] ${name}`,
+        JSON.stringify(rawArgs).slice(0, 800),
+      );
+    } catch {
+      /* ignore */
     }
 
     switch (name as AgentToolName) {
       case "list_collections":
         return this.knowledge.agentListCollections(organizationId, projectId);
-      case "search_records":
-        return this.knowledge.agentSearch(organizationId, projectId, {
-          query: args.query as string | undefined,
-          collection: args.collection as string | undefined,
-          filters: (args.filters as Record<string, unknown>) || undefined,
-          limit: args.limit as number | undefined,
-        });
-      case "create_record":
-        return this.knowledge.agentCreateRecord(organizationId, projectId, {
-          collection: String(args.collection || ""),
-          data: (args.data as Record<string, unknown>) || {},
-        });
-      case "update_record":
-        return this.knowledge.agentUpdateRecord(organizationId, projectId, {
-          recordId: String(args.recordId || ""),
-          collection: args.collection as string | undefined,
-          data: (args.data as Record<string, unknown>) || {},
-        });
+      case "search_records": {
+        const s = normalizeSearchArgs(rawArgs);
+        return this.knowledge.agentSearch(organizationId, projectId, s);
+      }
+      case "create_record": {
+        const c = normalizeCreateArgs(rawArgs);
+        const result = await this.knowledge.agentCreateRecord(organizationId, projectId, c);
+        console.log(`[voice.tool] create_record →`, JSON.stringify(result).slice(0, 500));
+        return result;
+      }
+      case "update_record": {
+        const u = normalizeUpdateArgs(rawArgs);
+        return this.knowledge.agentUpdateRecord(organizationId, projectId, u);
+      }
+      case "delete_record": {
+        const d = normalizeDeleteArgs(rawArgs);
+        return this.knowledge.agentDeleteRecord(organizationId, projectId, d);
+      }
       default:
         throw new NotFoundException(`Alət tapılmadı: ${name}`);
     }
