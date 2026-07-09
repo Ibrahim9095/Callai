@@ -146,7 +146,7 @@ See ADR-0005.
 
 ## 9. Open decisions (need confirmation before scaffolding)
 
-1. **Voice default:** Edge Neural Banu/Babek ($0 TTS) behind `VoiceProvider`. —
+1. **Voice default:** OpenAI Realtime (low latency) behind `VoiceProvider`. —
    *Accepted (ADR-0003).*
 2. **Telephony:** DIDWW (or equivalent AZ SIP) for +994, behind SIP adapter;
    browser calls for PoC. — *Recommended.*

@@ -25,6 +25,7 @@ import {
   openaiRealtimeModel,
   openaiSafetyIdentifier,
   openaiSttModel,
+  openaiTtsInstructions,
   openaiTtsModel,
   openaiVadConfig,
   resolveOpenAiSpeechApiVoice,
@@ -119,34 +120,38 @@ export class OpenAiRealtimeVoiceProvider implements VoiceProvider {
     };
   }
 
-  /** Standalone OpenAI TTS (greeting preview / non-realtime fallback). */
+  /** Standalone OpenAI TTS — mandatory model: gpt-4o-mini-tts. */
   async speak(req: SpeakRequest): Promise<SpeakResult> {
     if (!this.configured()) {
-      throw new Error("OPENAI_API_KEY təyin edilməyib");
+      throw new Error("OPENAI_API_KEY təyin edilməyib (.env-ə əlavə edin)");
     }
     const text = String(req.text || "").trim();
     if (!text) {
       return { audioBase64: "", mimeType: "audio/mpeg", provider: this.id };
     }
-    // Standalone Speech API does not accept Realtime-only voices (marin/cedar)
     const voice = resolveOpenAiSpeechApiVoice({ voiceId: req.voiceId });
     const speedRaw = Number(process.env.OPENAI_TTS_SPEED || "1.15");
     const speed = Number.isFinite(speedRaw)
       ? Math.min(4, Math.max(0.25, speedRaw))
       : 1.15;
+    const model = openaiTtsModel(); // gpt-4o-mini-tts
+    const body: Record<string, unknown> = {
+      model,
+      voice,
+      input: text,
+      response_format: "mp3",
+      speed,
+      instructions: openaiTtsInstructions({
+        gender: voice === "cedar" || voice === "onyx" ? "male" : "female",
+      }),
+    };
     const res = await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${openaiApiKey()}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model: openaiTtsModel(),
-        voice,
-        input: text,
-        response_format: "mp3",
-        speed,
-      }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));

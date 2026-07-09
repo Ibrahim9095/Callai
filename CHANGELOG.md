@@ -7,10 +7,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 ## [Unreleased]
 
 ### Changed
+- **Mandatory STT/TTS:** `gpt-4o-transcribe` + `gpt-4o-mini-tts` only
+  (legacy `whisper` / `tts-1` refused). Set `OPENAI_API_KEY` in `.env` — no
+  code changes needed to swap keys.
 - **OpenAI Realtime (mandatory default):** Voice Engine now uses OpenAI
   speech-to-speech via WebRTC (`gpt-realtime-2.1` + `gpt-4o-transcribe` STT).
-  Target reply latency **1–2s**. All model/voice IDs are **env-only**
-  (`OPENAI_REALTIME_MODEL`, `OPENAI_STT_MODEL`, `OPENAI_TTS_MODEL`, …).
+  Target reply latency **1–2s**. All model/voice IDs are **env-only**.
   Barge-in via server VAD `interrupt_response`. Edge Neural kept as
   `VOICE_PROVIDER=edge_neural` fallback.
 - **Admin prompts order:** Salamlama → User Prompt → System Prompt (fixed).

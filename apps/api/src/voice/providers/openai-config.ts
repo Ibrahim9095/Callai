@@ -2,12 +2,19 @@
  * OpenAI Voice Engine config — ALL model/voice IDs come from env.
  * Never hardcode production model names in call paths; change env to upgrade.
  *
- * Defaults track OpenAI's current recommended Realtime stack (2026):
- *   Realtime speech-to-speech : OPENAI_REALTIME_MODEL
- *   Input transcription (STT) : OPENAI_STT_MODEL
- *   Standalone TTS fallback   : OPENAI_TTS_MODEL
- *   Chat fallback (text)      : OPENAI_CHAT_MODEL
+ * Mandatory AI Voice OS defaults:
+ *   STT : gpt-4o-transcribe   (OPENAI_STT_MODEL)
+ *   TTS : gpt-4o-mini-tts     (OPENAI_TTS_MODEL)
+ *   Realtime S2S (low latency): OPENAI_REALTIME_MODEL
+ *
+ * Only OPENAI_API_KEY is required in .env to run.
  */
+
+/** Canonical mandatory defaults (override via env only). */
+export const DEFAULT_OPENAI_STT_MODEL = "gpt-4o-transcribe";
+export const DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts";
+export const DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime-2.1";
+export const DEFAULT_OPENAI_CHAT_MODEL = "gpt-4o-mini";
 
 export function openaiApiKey(): string {
   return (process.env.OPENAI_API_KEY || "").trim();
@@ -22,26 +29,47 @@ export function openaiRealtimeModel(): string {
   return (
     process.env.OPENAI_REALTIME_MODEL ||
     process.env.VOICE_REALTIME_MODEL ||
-    "gpt-realtime-2.1"
+    DEFAULT_OPENAI_REALTIME_MODEL
   ).trim();
 }
 
-/** Streaming / request STT model used inside Realtime input transcription. */
+/**
+ * STT — mandatory: gpt-4o-transcribe
+ * Used as Realtime input transcription + any standalone transcription.
+ */
 export function openaiSttModel(): string {
-  return (
+  const fromEnv = (
     process.env.OPENAI_STT_MODEL ||
     process.env.VOICE_STT_MODEL ||
-    "gpt-4o-transcribe"
+    DEFAULT_OPENAI_STT_MODEL
   ).trim();
+  // Refuse legacy whisper / mini-transcribe as production STT
+  if (/whisper|tts-1/i.test(fromEnv)) {
+    console.warn(
+      `[voice] OPENAI_STT_MODEL=${fromEnv} is not allowed — using ${DEFAULT_OPENAI_STT_MODEL}`,
+    );
+    return DEFAULT_OPENAI_STT_MODEL;
+  }
+  return fromEnv || DEFAULT_OPENAI_STT_MODEL;
 }
 
-/** Standalone TTS model (pipeline fallback / speak endpoint). */
+/**
+ * TTS — mandatory: gpt-4o-mini-tts
+ * Used for speak endpoint and pipeline fallback (not classic tts-1).
+ */
 export function openaiTtsModel(): string {
-  return (
+  const fromEnv = (
     process.env.OPENAI_TTS_MODEL ||
     process.env.VOICE_TTS_MODEL ||
-    "tts-1"
+    DEFAULT_OPENAI_TTS_MODEL
   ).trim();
+  if (/^tts-1/i.test(fromEnv)) {
+    console.warn(
+      `[voice] OPENAI_TTS_MODEL=${fromEnv} is not allowed — using ${DEFAULT_OPENAI_TTS_MODEL}`,
+    );
+    return DEFAULT_OPENAI_TTS_MODEL;
+  }
+  return fromEnv || DEFAULT_OPENAI_TTS_MODEL;
 }
 
 /** Text chat model for non-realtime pipeline fallback. */
@@ -49,7 +77,7 @@ export function openaiChatModel(): string {
   return (
     process.env.OPENAI_CHAT_MODEL ||
     process.env.VOICE_LLM_MODEL ||
-    "gpt-4o-mini"
+    DEFAULT_OPENAI_CHAT_MODEL
   ).trim();
 }
 
@@ -66,12 +94,16 @@ export function openaiVoiceMale(): string {
   return (process.env.OPENAI_VOICE_MALE || "cedar").trim();
 }
 
-const REALTIME_VOICES = [
+/** Voices supported by Realtime + gpt-4o-mini-tts. */
+const OPENAI_VOICES = [
   "alloy",
   "ash",
   "ballad",
   "coral",
   "echo",
+  "fable",
+  "nova",
+  "onyx",
   "sage",
   "shimmer",
   "verse",
@@ -79,46 +111,48 @@ const REALTIME_VOICES = [
   "cedar",
 ] as const;
 
-/** Classic /v1/audio/speech voices (tts-1) — marin/cedar are Realtime-only. */
-const SPEECH_API_VOICES = [
-  "nova",
-  "shimmer",
-  "echo",
-  "onyx",
-  "fable",
-  "alloy",
-  "ash",
-  "sage",
-  "coral",
-] as const;
-
-/** Map operator gender / catalog voice → OpenAI Realtime voice id. */
+/** Map operator gender / catalog voice → OpenAI voice id. */
 export function resolveOpenAiVoice(opts: {
   voiceId?: string | null;
   gender?: "female" | "male" | "unknown" | null;
 }): string {
   const v = (opts.voiceId || "").toLowerCase();
-  if ((REALTIME_VOICES as readonly string[]).includes(v)) return v;
+  if ((OPENAI_VOICES as readonly string[]).includes(v)) return v;
   if (v.includes("babek") || v.includes("male") || opts.gender === "male") {
     return openaiVoiceMale();
   }
   return openaiVoiceFemale();
 }
 
-/** Map to a voice accepted by POST /v1/audio/speech (standalone TTS fallback). */
+/**
+ * Voice for POST /v1/audio/speech (gpt-4o-mini-tts).
+ * marin / cedar are supported on gpt-4o-mini-tts (recommended quality).
+ */
 export function resolveOpenAiSpeechApiVoice(opts: {
   voiceId?: string | null;
   gender?: "female" | "male" | "unknown" | null;
 }): string {
-  const v = (opts.voiceId || "").toLowerCase();
-  if ((SPEECH_API_VOICES as readonly string[]).includes(v)) return v;
-  // Realtime-only → closest classic voice
-  if (v === "marin" || v === "coral" || v === "verse") return "nova";
-  if (v === "cedar" || v === "ballad") return "onyx";
-  if (v.includes("babek") || v.includes("male") || opts.gender === "male") {
-    return "onyx";
-  }
-  return "nova";
+  return resolveOpenAiVoice(opts);
+}
+
+/** Natural Azerbaijani call-center delivery for gpt-4o-mini-tts `instructions`. */
+export function openaiTtsInstructions(opts?: {
+  persona?: string | null;
+  gender?: "female" | "male" | "unknown" | null;
+}): string {
+  const fromEnv = (process.env.OPENAI_TTS_INSTRUCTIONS || "").trim();
+  if (fromEnv) return fromEnv;
+  const who =
+    opts?.gender === "male"
+      ? "Speak as a warm, professional male call-center operator."
+      : "Speak as a warm, professional female call-center operator.";
+  return [
+    who,
+    "Language: fluent Azerbaijani (Baku dialect). Clear, natural, human — not robotic.",
+    "Pace: brisk call-center tempo, no long pauses between words.",
+    "Tone: friendly, polite, patient, empathetic. Never rude.",
+    "Do not sound like a script or announcement.",
+  ].join(" ");
 }
 
 /** Server VAD — tuned for call-center: fast turn-taking, barge-in on. */
