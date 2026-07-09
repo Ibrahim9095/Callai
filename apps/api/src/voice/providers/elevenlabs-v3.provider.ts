@@ -20,9 +20,10 @@ import type {
 } from "@aivoiceos/voice-engine";
 import { AGENT_TOOLS } from "../agent-tools";
 import {
-  SILENCE_REPROMPT_AZ,
+  SOFT_TIMEOUT_FILLERS_AZ,
   TTS_CALL_CENTER,
   TURN_CALL_CENTER,
+  INTERRUPTION_IGNORE_TERMS_AZ,
 } from "../call-lifecycle";
 
 const ELEVEN_API = "https://api.elevenlabs.io/v1";
@@ -193,10 +194,12 @@ function buildAgentBody(spec: VoiceAgentSpec) {
     voiceId: spec.voiceId,
     gender: spec.gender,
   });
-  const temperature =
+  const temperatureRaw =
     typeof spec.temperature === "number" && !Number.isNaN(spec.temperature)
-      ? Math.min(1, Math.max(0, spec.temperature))
-      : 0.45;
+      ? spec.temperature
+      : 0.55;
+  // Floor: too-low temp sounds robotic / scripted (not Bakı human)
+  const temperature = Math.min(1, Math.max(0.5, temperatureRaw));
 
   const keywords = Array.from(
     new Set(
@@ -243,7 +246,10 @@ function buildAgentBody(spec: VoiceAgentSpec) {
     tools: toElevenClientTools(),
   };
   if (spec.maxTokens != null && spec.maxTokens > 0) {
-    promptBlock.max_tokens = spec.maxTokens;
+    // Enough room to finish 1–2 full AZ sentences (avoid mid-word cutoffs)
+    promptBlock.max_tokens = Math.max(spec.maxTokens, 180);
+  } else {
+    promptBlock.max_tokens = 220;
   }
 
   const speedRaw = Number(process.env.ELEVENLABS_TTS_SPEED || String(TTS_CALL_CENTER.speed));
@@ -296,9 +302,12 @@ function buildAgentBody(spec: VoiceAgentSpec) {
         speculative_turn: TURN_CALL_CENTER.speculative_turn,
         turn_model: TURN_CALL_CENTER.turn_model,
         spelling_patience: "auto",
+        interruption_ignore_terms: [...INTERRUPTION_IGNORE_TERMS_AZ],
         soft_timeout_config: {
           timeout_seconds: TURN_CALL_CENTER.soft_timeout_seconds,
-          message: SILENCE_REPROMPT_AZ,
+          message: SOFT_TIMEOUT_FILLERS_AZ[0],
+          additional_soft_timeout_messages: [...SOFT_TIMEOUT_FILLERS_AZ.slice(1)],
+          randomize_fillers: true,
           max_soft_timeouts_per_generation: TURN_CALL_CENTER.max_soft_timeouts_per_generation,
         },
       },

@@ -138,9 +138,9 @@ export class VoiceService {
       userInstruction,
       speechSpeed,
       ttsRate,
-      // Internal LLM knobs (not exposed in admin)
-      temperature: agent.temperature ?? 0.35,
-      maxTokens: agent.maxTokens ?? 140,
+      // Natural dialogue: slightly warmer + enough tokens to finish sentences
+      temperature: agent.temperature ?? 0.55,
+      maxTokens: agent.maxTokens ?? 220,
     };
   }
 
