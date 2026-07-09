@@ -59,8 +59,7 @@ export const TURN_CALL_CENTER = {
 } as const;
 
 /**
- * Short backchannels that must NOT cut the agent mid-sentence.
- * (User saying "hə / bəli" while listening.)
+ * Short backchannels / noise-like tokens that must NOT cut the agent mid-sentence.
  */
 export const INTERRUPTION_IGNORE_TERMS_AZ = [
   "hə",
@@ -74,7 +73,32 @@ export const INTERRUPTION_IGNORE_TERMS_AZ = [
   "ok",
   "okay",
   "hmm",
+  "hm",
   "aha",
+  "aa",
+  "ah",
+  "eh",
   "mm",
   "mhm",
+  "uh",
+  "uhhuh",
+  "uh-huh",
+  "yeah",
+  "ya",
 ] as const;
+
+/**
+ * Client barge-in gate (while operator is speaking).
+ * Only sustained, intentional speech unmutes the mic toward ElevenLabs.
+ * Short noise / breath / keyboard clicks stay below threshold and are ignored.
+ */
+export const BARGE_IN_GATE = {
+  /** Analyser level 0–1; higher = less sensitive to noise */
+  speechLevelThreshold: 0.22,
+  /** Must stay above threshold this long before barge-in opens */
+  speechHoldMs: 550,
+  /** Drop below threshold this long → close barge-in again (while agent still speaking) */
+  silenceReleaseMs: 280,
+  /** Optional ElevenLabs onVadScore floor when available */
+  vadScoreThreshold: 0.72,
+} as const;

@@ -52,6 +52,18 @@ const STATUS_LABELS: Record<Phase, string> = {
   error: "Xəta",
 };
 
+/**
+ * Barge-in gate while the operator is speaking.
+ * Short noise / breath / keyboard must NOT flip the agent into listening.
+ * Only sustained, intentional speech opens the mic toward ElevenLabs.
+ */
+const BARGE_IN_GATE = {
+  speechLevelThreshold: 0.22,
+  speechHoldMs: 550,
+  silenceReleaseMs: 280,
+  vadScoreThreshold: 0.72,
+} as const;
+
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -116,6 +128,14 @@ export default function TestCallPage() {
   const rafRef = useRef(0);
   const mutedRef = useRef(false);
   const intentionalHangupRef = useRef(false);
+  /** True while ElevenLabs agent is producing speech */
+  const agentSpeakingRef = useRef(false);
+  /** Mic currently open for barge-in (only while agent speaking) */
+  const bargeOpenRef = useRef(false);
+  const speechAboveSinceRef = useRef<number | null>(null);
+  const speechBelowSinceRef = useRef<number | null>(null);
+  const lastVadScoreRef = useRef(0);
+  const levelRef = useRef(0);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -143,6 +163,79 @@ export default function TestCallPage() {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [lines, tools]);
 
+  const applyMicTransmit = useCallback((transmit: boolean) => {
+    if (mutedRef.current) {
+      try {
+        conversationRef.current?.setMicMuted?.(true);
+      } catch {
+        /* ignore */
+      }
+      localStreamRef.current?.getAudioTracks().forEach((t) => {
+        t.enabled = false;
+      });
+      return;
+    }
+    try {
+      conversationRef.current?.setMicMuted?.(!transmit);
+    } catch {
+      /* ignore */
+    }
+    localStreamRef.current?.getAudioTracks().forEach((t) => {
+      t.enabled = transmit;
+    });
+  }, []);
+
+  const setAgentSpeaking = useCallback(
+    (speaking: boolean) => {
+      agentSpeakingRef.current = speaking;
+      if (!speaking) {
+        // Operator finished — open mic for normal turn-taking
+        bargeOpenRef.current = false;
+        speechAboveSinceRef.current = null;
+        speechBelowSinceRef.current = null;
+        applyMicTransmit(true);
+        return;
+      }
+      // Operator speaking — mute mic until sustained intentional speech
+      bargeOpenRef.current = false;
+      speechAboveSinceRef.current = null;
+      speechBelowSinceRef.current = null;
+      applyMicTransmit(false);
+    },
+    [applyMicTransmit],
+  );
+
+  const evaluateBargeInGate = useCallback(() => {
+    if (!agentSpeakingRef.current || mutedRef.current) return;
+
+    const now = performance.now();
+    const level = levelRef.current;
+    const vad = lastVadScoreRef.current;
+    const loudEnough =
+      level >= BARGE_IN_GATE.speechLevelThreshold ||
+      vad >= BARGE_IN_GATE.vadScoreThreshold;
+
+    if (loudEnough) {
+      speechBelowSinceRef.current = null;
+      if (speechAboveSinceRef.current == null) speechAboveSinceRef.current = now;
+      const held = now - speechAboveSinceRef.current;
+      if (!bargeOpenRef.current && held >= BARGE_IN_GATE.speechHoldMs) {
+        bargeOpenRef.current = true;
+        applyMicTransmit(true);
+      }
+    } else {
+      speechAboveSinceRef.current = null;
+      if (bargeOpenRef.current) {
+        if (speechBelowSinceRef.current == null) speechBelowSinceRef.current = now;
+        if (now - speechBelowSinceRef.current >= BARGE_IN_GATE.silenceReleaseMs) {
+          bargeOpenRef.current = false;
+          speechBelowSinceRef.current = null;
+          applyMicTransmit(false);
+        }
+      }
+    }
+  }, [applyMicTransmit]);
+
   const stopMeter = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
@@ -150,6 +243,7 @@ export default function TestCallPage() {
       void meterCtxRef.current.close().catch(() => undefined);
       meterCtxRef.current = null;
     }
+    levelRef.current = 0;
     setLevel(0);
   }, []);
 
@@ -172,7 +266,9 @@ export default function TestCallPage() {
         const tick = () => {
           analyser.getByteFrequencyData(data);
           const avg = data.reduce((a, b) => a + b, 0) / data.length / 255;
+          levelRef.current = avg;
           setLevel(avg);
+          evaluateBargeInGate();
           rafRef.current = requestAnimationFrame(tick);
         };
         tick();
@@ -180,7 +276,7 @@ export default function TestCallPage() {
         /* optional */
       }
     },
-    [stopMeter],
+    [evaluateBargeInGate, stopMeter],
   );
 
   const pushLine = useCallback((line: Omit<Line, "id">) => {
@@ -203,6 +299,11 @@ export default function TestCallPage() {
     intentionalHangupRef.current = true;
     inCallRef.current = false;
     sessionGenerationRef.current += 1;
+    agentSpeakingRef.current = false;
+    bargeOpenRef.current = false;
+    speechAboveSinceRef.current = null;
+    speechBelowSinceRef.current = null;
+    lastVadScoreRef.current = 0;
     stopMeter();
     await endConversation();
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
@@ -281,6 +382,11 @@ export default function TestCallPage() {
     setTools([]);
     setMuted(false);
     mutedRef.current = false;
+    agentSpeakingRef.current = false;
+    bargeOpenRef.current = false;
+    speechAboveSinceRef.current = null;
+    speechBelowSinceRef.current = null;
+    lastVadScoreRef.current = 0;
     setPhase("connecting");
     setConnected(true);
     pushLine({ role: "system", text: "ElevenLabs v3 qoşulur…" });
@@ -328,7 +434,8 @@ export default function TestCallPage() {
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
-            autoGainControl: true,
+            // Prefer less AGC boost of quiet noise while operator speaks
+            autoGainControl: false,
           },
         });
         localStreamRef.current = localStream;
@@ -394,9 +501,27 @@ export default function TestCallPage() {
         },
         onModeChange: ({ mode }) => {
           if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
-          if (mode === "speaking") setPhase("speaking");
-          else if (mode === "listening") setPhase("listening");
-          else setPhase("live");
+          if (mode === "speaking") {
+            setAgentSpeaking(true);
+            setPhase("speaking");
+          } else if (mode === "listening") {
+            setAgentSpeaking(false);
+            setPhase("listening");
+          } else {
+            setAgentSpeaking(false);
+            setPhase("live");
+          }
+        },
+        onVadScore: ({ vadScore }) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          lastVadScoreRef.current = Number(vadScore) || 0;
+          evaluateBargeInGate();
+        },
+        onInterruption: () => {
+          // Real barge-in accepted by ElevenLabs — treat as listening
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          setAgentSpeaking(false);
+          setPhase("listening");
         },
         onMessage: (message) => {
           if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
@@ -425,12 +550,15 @@ export default function TestCallPage() {
     const next = !muted;
     setMuted(next);
     mutedRef.current = next;
-    try {
-      conversationRef.current?.setMicMuted?.(next);
-    } catch {
-      localStreamRef.current?.getAudioTracks().forEach((t) => {
-        t.enabled = !next;
-      });
+    if (next) {
+      applyMicTransmit(false);
+      return;
+    }
+    // Unmute: open mic unless agent is speaking and barge gate is closed
+    if (agentSpeakingRef.current && !bargeOpenRef.current) {
+      applyMicTransmit(false);
+    } else {
+      applyMicTransmit(true);
     }
   }
 
@@ -463,8 +591,8 @@ export default function TestCallPage() {
           <p className="callai-brand-hero">CallAI</p>
           <h1>{businessLabel || projectName || "Operator xətti"}</h1>
           <p className="callai-lede">
-            {operatorName} ilə real vaxtda danışın — Bakı azərbaycanlısı kimi təbii səs,
-            barge-in aktiv.
+            {operatorName} ilə real vaxtda danışın — Bakı azərbaycanlısı kimi təbii səs.
+            Operator danışarkən yalnız aydın nitq kəsir (fon/küy yox).
           </p>
 
           <div className="callai-cta-row">
@@ -546,7 +674,7 @@ export default function TestCallPage() {
           <div className="callai-store-chip">
             <span>{projectName || "Layihə"}</span>
             <span>{businessLabel || "Operator xətti"}</span>
-            <span>{operatorName} · ElevenLabs v3 · barge-in</span>
+            <span>{operatorName} · ElevenLabs v3 · sabit barge-in</span>
           </div>
         </div>
       </section>

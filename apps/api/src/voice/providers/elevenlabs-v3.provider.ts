@@ -285,7 +285,8 @@ function buildAgentBody(spec: VoiceAgentSpec) {
       agent: {
         first_message: spec.firstMessage,
         language: "az",
-        disable_first_message_interruptions: false,
+        // Protect greeting from cough/noise barge-in
+        disable_first_message_interruptions: true,
         prompt: promptBlock,
       },
       tts,
@@ -294,6 +295,10 @@ function buildAgentBody(spec: VoiceAgentSpec) {
         provider: "scribe_realtime",
         user_input_audio_format: "pcm_16000",
         keywords,
+      },
+      // Ignore background TV/other voices as barge-in triggers
+      vad: {
+        background_voice_detection: false,
       },
       turn: {
         turn_timeout: TURN_CALL_CENTER.turn_timeout,
@@ -314,6 +319,16 @@ function buildAgentBody(spec: VoiceAgentSpec) {
       conversation: {
         text_only: false,
         max_duration_seconds: 3600,
+        // Keep interruption event enabled — client mic-gate reduces false positives
+        client_events: [
+          "audio",
+          "interruption",
+          "agent_response",
+          "user_transcript",
+          "agent_response_correction",
+          "agent_tool_response",
+          "vad_score",
+        ],
       },
     },
     platform_settings: {
