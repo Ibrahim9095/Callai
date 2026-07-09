@@ -1,6 +1,8 @@
 import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
 import {
   buildCallGreeting,
+  buildIdentityPrompt,
+  extractPersonaName,
   formatOperatorDisplayName,
   getBusinessTemplate,
   inferOperatorGender,
@@ -9,6 +11,8 @@ import { PrismaService } from "../prisma/prisma.service";
 import { KnowledgeService } from "../knowledge/knowledge.service";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "./agent-tools";
 import {
+  AZ_PREMIUM_STYLE,
+  VOICE_RUNTIME_RULES,
   elevenConfigured,
   ensureProjectElevenAgent,
   getElevenConversationToken,
@@ -43,7 +47,7 @@ export class VoiceService {
     return getBusinessTemplate(project.businessTemplate)?.label || project.businessTemplate;
   }
 
-  /** Start a browser WebRTC test call for this project (ElevenLabs for now). */
+  /** Start a browser WebRTC test call — always syncs latest persona/prompt to ElevenLabs. */
   async createSession(organizationId: string, projectId: string) {
     const project = await this.loadProject(organizationId, projectId);
 
@@ -63,21 +67,43 @@ export class VoiceService {
       templateId: project.businessTemplate,
       voiceId: agent.voiceId,
       customGreeting: agent.greeting,
+      projectName: project.name,
     });
 
-    const cached = agent.externalAgentId || null;
+    const identity = buildIdentityPrompt({
+      persona: agent.persona,
+      businessLabel,
+      templateId: project.businessTemplate,
+      voiceId: agent.voiceId,
+      projectName: project.name,
+      firstMessage,
+    });
 
-    const { agent_id } = await ensureProjectElevenAgent({
+    const fullPrompt = [
+      identity,
+      AZ_PREMIUM_STYLE,
+      (agent.prompt || "").trim(),
+      VOICE_RUNTIME_RULES,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+
+    const name = extractPersonaName(agent.persona);
+    const forceRecreate = Boolean(agent.externalAgentId === null);
+
+    const { agent_id, recreated } = await ensureProjectElevenAgent({
       projectId: project.id,
       projectName: project.name,
       persona: agent.persona,
-      prompt: agent.prompt,
+      prompt: fullPrompt,
       firstMessage,
       language: agent.language || "az",
-      cachedAgentId: cached,
+      keywords: [name, operatorName, project.name, businessLabel].filter(Boolean) as string[],
+      cachedAgentId: agent.externalAgentId,
+      forceRecreate,
     });
 
-    if (agent.externalAgentId !== agent_id) {
+    if (agent.externalAgentId !== agent_id || recreated) {
       await this.prisma.agent.update({
         where: { projectId },
         data: { externalAgentId: agent_id },

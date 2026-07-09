@@ -70,6 +70,7 @@ export default function TestCallPage() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const liveSinceRef = useRef<number | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const intentionalHangupRef = useRef(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -110,7 +111,9 @@ export default function TestCallPage() {
     }
   }, []);
 
+  /** Only the customer (or explicit hang-up button) ends the call — never auto. */
   const hangup = useCallback(async () => {
+    intentionalHangupRef.current = true;
     stopRingtone();
     try {
       await conversationRef.current?.endSession?.();
@@ -124,9 +127,18 @@ export default function TestCallPage() {
     setPhase((p) => (p === "idle" ? "idle" : "ended"));
   }, [stopRingtone]);
 
-  useEffect(() => () => {
-    void hangup();
-  }, [hangup]);
+  // Unmount only: do not depend on hangup (that would re-run and kill the live call).
+  useEffect(() => {
+    return () => {
+      stopRingRef.current?.();
+      try {
+        void conversationRef.current?.endSession?.();
+      } catch {
+        /* ignore */
+      }
+      localStreamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
   function pushLine(line: Line) {
     setLines((prev) => [...prev.slice(-50), line]);
@@ -161,6 +173,7 @@ export default function TestCallPage() {
     setLines([]);
     setToolsLog([]);
     setElapsed(0);
+    intentionalHangupRef.current = false;
     setPhase("ringing");
     pushLine({ role: "system", text: "Zəng edilir…" });
 
@@ -176,14 +189,13 @@ export default function TestCallPage() {
       /* ringtone optional */
     }
 
-    // Let the ringtone play briefly so it feels like a real call
-    await new Promise((r) => setTimeout(r, 2200));
+    // Short ring so connect feels fast
+    await new Promise((r) => setTimeout(r, 1400));
 
     setPhase("connecting");
     pushLine({ role: "system", text: "Qoşulur…" });
 
     try {
-      // Prefetch mic during connect to cut WebRTC setup time
       const micPromise = navigator.mediaDevices
         .getUserMedia({
           audio: {
@@ -212,7 +224,7 @@ export default function TestCallPage() {
         onConnect: () => {
           liveSinceRef.current = Date.now();
           setPhase("live");
-          pushLine({ role: "system", text: "Zəng açıldı" });
+          pushLine({ role: "system", text: "Zəng açıldı — danışa bilərsiniz" });
           if (session.firstMessage) {
             pushLine({ role: "assistant", text: session.firstMessage });
           }
@@ -220,8 +232,14 @@ export default function TestCallPage() {
         onDisconnect: () => {
           stopRingtone();
           liveSinceRef.current = null;
+          // If provider dropped unexpectedly, keep UI honest but do not auto-restart.
           setPhase("ended");
-          pushLine({ role: "system", text: "Zəng bitdi" });
+          pushLine({
+            role: "system",
+            text: intentionalHangupRef.current
+              ? "Zəngi bitirdiniz"
+              : "Bağlantı kəsildi — yenidən «Zəng et» basın",
+          });
         },
         onError: (err) => {
           const message = typeof err === "string" ? err : (err as Error)?.message || "Səs xətası";
@@ -317,8 +335,9 @@ export default function TestCallPage() {
 
           {phase === "idle" || phase === "ended" ? (
             <p className="call-hint">
-              Zəng açılanda operator özünü təqdim edəcək, sonra «Buyurun, necə kömək edə bilərəm?»
-              deyəcək. Mikrofon icazəsi lazımdır.
+              Zəngi yalnız siz bitirin (qırmızı düymə). Operator özünü təqdim edəcək, sizi dinləyəcək
+              və susanda özü davam etdirəcək. Persona adını dəyişib «Yadda saxla» edin — növbəti zəngdə
+              yeni adla danışacaq.
             </p>
           ) : null}
         </div>

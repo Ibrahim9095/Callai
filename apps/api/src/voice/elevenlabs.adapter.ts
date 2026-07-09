@@ -1,9 +1,10 @@
 /**
  * ElevenLabs Conversational AI adapter — per-project agent sync + session token.
- * Tuned for low WebRTC latency and careful turn-taking.
+ * Goals: fluent AZ, correct persona name, never auto-hangup, minimal latency.
  */
 
-import { AGENT_TOOLS, VOICE_RUNTIME_RULES } from "./agent-tools";
+import { AGENT_TOOLS } from "./agent-tools";
+import { AZ_PREMIUM_STYLE, VOICE_RUNTIME_RULES } from "./prompt-style";
 
 const ELEVEN_API = "https://api.elevenlabs.io/v1";
 
@@ -74,30 +75,53 @@ export interface ProjectAgentSpec {
   projectId: string;
   projectName: string;
   persona: string;
+  /** Full system prompt already including identity + style */
   prompt: string;
-  /** Fully built first message (intro + buyurun…) */
   firstMessage: string;
   language: string;
+  /** ASR boost keywords (operator name, business terms) */
+  keywords?: string[];
   cachedAgentId?: string | null;
+  /** Force recreate if PATCH fails or persona must fully refresh */
+  forceRecreate?: boolean;
 }
 
 function buildAgentBody(spec: ProjectAgentSpec) {
   const voiceId = process.env.ELEVENLABS_VOICE_ID || "FDs1ZX5J4e4f2c2erxtW";
+  // Prefer a stronger model for fluent AZ when configured; flash stays default for cost/speed.
   const llm = process.env.ELEVENLABS_LLM || "gemini-2.5-flash";
   const ttsModel = process.env.ELEVENLABS_TTS_MODEL || "eleven_v3_conversational";
 
-  const prompt = `${spec.prompt}\n\n${VOICE_RUNTIME_RULES}`.trim();
+  const keywords = Array.from(
+    new Set(
+      [
+        ...(spec.keywords || []),
+        "Bakı",
+        "manat",
+        "sifariş",
+        "rezerv",
+        "otaq",
+        "buyurun",
+        "əlbəttə",
+        "xahiş",
+        "bir saniyə",
+      ].filter(Boolean),
+    ),
+  ).slice(0, 30);
 
   return {
-    name: `AI Voice OS — ${spec.projectName}`.slice(0, 80),
+    name: `AI Voice OS — ${spec.projectName} — ${spec.persona}`.slice(0, 80),
     conversation_config: {
       agent: {
         first_message: spec.firstMessage,
-        language: spec.language || "az",
+        language: "az",
+        disable_first_message_interruptions: true,
         prompt: {
-          prompt,
+          prompt: spec.prompt,
           llm,
-          temperature: 0.55,
+          temperature: 0.45,
+          // Explicitly omit built-in end_call so the agent cannot hang up.
+          built_in_tools: {},
           tools: toElevenClientTools(),
         },
       },
@@ -105,27 +129,43 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         voice_id: voiceId,
         model_id: ttsModel,
         expressive_mode: true,
-        stability: 0.4,
-        similarity_boost: 0.72,
-        speed: 1.02,
-        // Lowest streaming latency for WebRTC
+        stability: 0.38,
+        similarity_boost: 0.78,
+        speed: 1.05,
         optimize_streaming_latency: 4,
         agent_output_audio_format: "pcm_16000",
+        suggested_audio_tags: [
+          { tag: "warmly", description: "Mehriban salam və təqdimat" },
+          { tag: "friendly", description: "Səmimi söhbət" },
+          { tag: "thinking", description: "Dataya baxarkən" },
+          { tag: "confident", description: "Aydın cavab və təsdiq" },
+        ],
       },
       asr: {
         quality: "high",
         provider: "scribe_realtime",
         user_input_audio_format: "pcm_16000",
+        keywords,
       },
       turn: {
-        // Faster turn-taking: less silence before agent responds
-        turn_timeout: 6,
+        // Wait for full user sentence, then respond quickly
+        turn_timeout: 12,
         silence_end_call_timeout: -1,
-        turn_eagerness: "eager",
+        turn_eagerness: "normal",
         speculative_turn: true,
         turn_model: "turn_v3",
+        spelling_patience: "auto",
+        soft_timeout_config: {
+          timeout_seconds: 8,
+          message: "Buyurun, sizi dinləyirəm.",
+          max_soft_timeouts_per_generation: 2,
+        },
       },
-      conversation: { text_only: false },
+      conversation: {
+        text_only: false,
+        // Long calls OK — customer ends; do not auto-cut early
+        max_duration_seconds: 3600,
+      },
     },
     platform_settings: {
       auth: { enable_auth: true },
@@ -133,11 +173,13 @@ function buildAgentBody(spec: ProjectAgentSpec) {
   };
 }
 
-export async function ensureProjectElevenAgent(spec: ProjectAgentSpec): Promise<{ agent_id: string }> {
+export async function ensureProjectElevenAgent(
+  spec: ProjectAgentSpec,
+): Promise<{ agent_id: string; recreated: boolean }> {
   if (!elevenKey()) throw new Error("ELEVENLABS_API_KEY təyin edilməyib");
 
   const body = buildAgentBody(spec);
-  const agentId = spec.cachedAgentId || undefined;
+  const agentId = spec.forceRecreate ? undefined : spec.cachedAgentId || undefined;
 
   if (agentId) {
     const patchRes = await fetch(`${ELEVEN_API}/convai/agents/${agentId}`, {
@@ -147,8 +189,10 @@ export async function ensureProjectElevenAgent(spec: ProjectAgentSpec): Promise<
     });
     if (patchRes.ok) {
       await patchRes.json().catch(() => ({}));
-      return { agent_id: agentId };
+      return { agent_id: agentId, recreated: false };
     }
+    const errText = await patchRes.text().catch(() => "");
+    console.warn("ElevenLabs agent patch failed, recreating:", errText.slice(0, 200));
   }
 
   const createRes = await fetch(`${ELEVEN_API}/convai/agents/create`, {
@@ -160,7 +204,7 @@ export async function ensureProjectElevenAgent(spec: ProjectAgentSpec): Promise<
   if (!createRes.ok) {
     throw new Error(formatError(data) || "ElevenLabs agent yaradıla bilmədi");
   }
-  return { agent_id: data.agent_id as string };
+  return { agent_id: data.agent_id as string, recreated: true };
 }
 
 export async function getElevenConversationToken(agentId: string): Promise<{ token: string }> {
@@ -173,3 +217,5 @@ export async function getElevenConversationToken(agentId: string): Promise<{ tok
   if (!res.ok) throw new Error(formatError(data) || "Conversation token alınmadı");
   return { token: data.token as string };
 }
+
+export { AZ_PREMIUM_STYLE, VOICE_RUNTIME_RULES };

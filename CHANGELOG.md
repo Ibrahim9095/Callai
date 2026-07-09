@@ -6,6 +6,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 
 ## [Unreleased]
 
+### Fixed
+- **Operator name not updating on call** (Leyla → Tahir): saving agent now
+  clears the cached ElevenLabs agent so the next call syncs the new persona,
+  greeting, and identity prompt. Greeting always uses the current name.
+- **Call dropping by itself**: removed React effect that re-hung-up on re-render;
+  disabled provider `end_call`; `silence_end_call_timeout: -1`;
+  `max_duration_seconds: 3600`. Only the customer hang-up button ends the call.
+  After the agent finishes a sentence it waits; if the customer stays silent it
+  re-prompts («Buyurun, sizi dinləyirəm»).
+
+### Improved
+- Premium Azerbaijani style (no Turkish), careful listening, faster TTS/streaming,
+  identity block at top of live prompt, ASR keywords for operator name.
+
 ### Added
 - **Call screen polish**: ringtone while connecting, large hang-up button,
   operator display name with xanım/bəy, business role on screen, call timer,

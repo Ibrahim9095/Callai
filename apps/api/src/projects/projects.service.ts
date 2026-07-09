@@ -127,9 +127,22 @@ export class ProjectsService {
 
   async updateAgent(organizationId: string, projectId: string, dto: UpdateAgentDto) {
     await this.get(organizationId, projectId);
+    // Persona/prompt/greeting changes must re-sync to the voice provider on next call.
+    // Clear cached remote agent id so the next session PATCHes/recreates with the new name.
+    const voiceAffecting =
+      dto.persona !== undefined ||
+      dto.prompt !== undefined ||
+      dto.greeting !== undefined ||
+      dto.language !== undefined ||
+      dto.voiceProvider !== undefined ||
+      dto.voiceId !== undefined;
+
     await this.prisma.agent.update({
       where: { projectId },
-      data: { ...dto },
+      data: {
+        ...dto,
+        ...(voiceAffecting ? { externalAgentId: null } : {}),
+      },
     });
     return this.get(organizationId, projectId);
   }
