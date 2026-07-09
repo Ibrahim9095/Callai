@@ -68,6 +68,26 @@ export const api = {
   assignPhone: (id: string, number: string) =>
     request<any>(`/projects/${id}/phone`, { method: "PATCH", body: JSON.stringify({ number }) }),
   removePhone: (id: string) => request<any>(`/projects/${id}/phone`, { method: "DELETE" }),
+
+  // Knowledge / data
+  collections: (pid: string) => request<any[]>(`/projects/${pid}/collections`),
+  records: (pid: string, cid: string) =>
+    request<{ collection: any; records: any[] }>(`/projects/${pid}/collections/${cid}/records`),
+  createRecord: (pid: string, cid: string, data: Record<string, unknown>) =>
+    request<any>(`/projects/${pid}/collections/${cid}/records`, {
+      method: "POST",
+      body: JSON.stringify({ data }),
+    }),
+  deleteRecord: (pid: string, cid: string, rid: string) =>
+    request<{ ok: boolean }>(`/projects/${pid}/collections/${cid}/records/${rid}`, {
+      method: "DELETE",
+    }),
+  importCsv: (pid: string, cid: string, csv: string) =>
+    request<{ ok: boolean; imported: number }>(`/projects/${pid}/collections/${cid}/import`, {
+      method: "POST",
+      body: JSON.stringify({ csv }),
+    }),
+
   updateAgent: (id: string, data: Record<string, unknown>) =>
     request<any>(`/projects/${id}/agent`, { method: "PATCH", body: JSON.stringify(data) }),
   setStatus: (id: string, status: string) =>

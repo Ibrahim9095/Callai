@@ -7,4 +7,5 @@ export * from "./roles";
 export * from "./business-templates";
 export * from "./voice";
 export * from "./phone";
+export * from "./collections";
 export * from "./dto";

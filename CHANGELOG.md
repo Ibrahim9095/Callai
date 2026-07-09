@@ -15,6 +15,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
   E.164 normalization and operator detection (Azercell/Bakcell/Nar/landline).
   Adds `PhoneNumber` model + `@aivoiceos/shared` phone helpers. Status is
   `pending` until live SIP routing is provisioned (ADR-0004).
+- **Knowledge base / per-project data** (structured, read+write): generic
+  `Collection` + `CollectionRecord` models (flexible JSON), scoped per project.
+  Business templates seed default collections (hotel → rooms + reservations,
+  clinic → services + appointments, shop → products + orders, …; generic for
+  custom businesses). API CRUD for collections/records + CSV import with type
+  coercion. Admin data page to add/edit/delete rows and import CSV. The AI
+  agent will read/write this data live during calls (wired in the voice step).
 
 ### Notes
 - Provider decisions ADR-0003 (voice: Azure default + ElevenLabs premium) and

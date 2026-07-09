@@ -11,6 +11,7 @@ import {
   DEFAULT_VOICE,
   normalizeAzPhone,
   getAzOperator,
+  getDefaultCollections,
 } from "@aivoiceos/shared";
 import { CreateProjectDto } from "./dto/create-project.dto";
 import { UpdateAgentDto } from "./dto/update-agent.dto";
@@ -66,6 +67,8 @@ export class ProjectsService {
       prompt = template.starterPrompt;
     }
 
+    const collectionsSeed = getDefaultCollections(businessTemplate);
+
     return this.prisma.project.create({
       data: {
         organizationId,
@@ -83,6 +86,13 @@ export class ProjectsService {
             greeting: null,
             active: false,
           },
+        },
+        collections: {
+          create: collectionsSeed.map((c) => ({
+            name: c.name,
+            label: c.label,
+            fields: c.fields as object,
+          })),
         },
       },
       include: { agent: true, phoneNumber: true },

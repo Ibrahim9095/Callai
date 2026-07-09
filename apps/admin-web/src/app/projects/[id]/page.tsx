@@ -254,10 +254,22 @@ export default function ProjectDetailPage() {
         </section>
 
         <section className="card">
+          <div className="row">
+            <div>
+              <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Bilik bazası / Data</h2>
+              <p className="muted" style={{ margin: "0.3rem 0 0" }}>
+                Layihənin datası (otaqlar, stok, rezervlər və s.). Agent zəngdə buradan cavab verəcək.
+              </p>
+            </div>
+            <div className="spacer" />
+            <Link className="btn primary" href={`/projects/${id}/data`}>Datanı idarə et →</Link>
+          </div>
+        </section>
+
+        <section className="card">
           <h2 className="title" style={{ fontSize: "1.05rem", marginTop: 0 }}>Növbəti mərhələlər</h2>
           <p className="muted" style={{ margin: 0 }}>
-            Bilik bazası (Excel/PDF), CRM və analitika bu layihəyə sonrakı versiyalarda əlavə
-            olunacaq (bax: docs/ROADMAP.md).
+            CRM və analitika bu layihəyə sonrakı versiyalarda əlavə olunacaq (bax: docs/ROADMAP.md).
           </p>
         </section>
       </div>

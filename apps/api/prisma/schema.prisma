@@ -63,8 +63,37 @@ model Project {
   updatedAt        DateTime      @updatedAt
   agent            Agent?
   phoneNumber      PhoneNumber?
+  collections      Collection[]
 
   @@index([organizationId])
+}
+
+model Collection {
+  id        String             @id @default(cuid())
+  projectId String
+  project   Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String // machine key, e.g. "rooms"
+  label     String
+  fields    Json // FieldDef[]
+  createdAt DateTime           @default(now())
+  records   CollectionRecord[]
+
+  @@unique([projectId, name])
+  @@index([projectId])
+}
+
+model CollectionRecord {
+  id           String     @id @default(cuid())
+  collectionId String
+  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  projectId    String // denormalized for tenant/project scoping
+  data         Json
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([collectionId])
+  @@index([projectId])
+  @@map("collection_records")
 }
 
 model PhoneNumber {
