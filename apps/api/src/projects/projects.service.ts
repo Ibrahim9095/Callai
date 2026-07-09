@@ -8,8 +8,8 @@ import {
   getBusinessTemplate,
   buildCustomStarterPrompt,
   CUSTOM_TEMPLATE_ID,
-  DEFAULT_VOICE,
-  defaultPersonaForTemplate,
+  resolveOperator,
+  voiceForOperator,
   normalizeAzPhone,
   getAzOperator,
 } from "@aivoiceos/shared";
@@ -46,7 +46,6 @@ export class ProjectsService {
   async create(organizationId: string, dto: CreateProjectDto) {
     let businessTemplate: string;
     let businessLabel: string;
-    let persona: string;
     let prompt: string;
 
     if (dto.businessTemplate === CUSTOM_TEMPLATE_ID) {
@@ -56,20 +55,19 @@ export class ProjectsService {
       }
       businessTemplate = CUSTOM_TEMPLATE_ID;
       businessLabel = customType;
-      // Personal name is manual — default Leyla; operator changes it in the panel.
-      persona = defaultPersonaForTemplate(CUSTOM_TEMPLATE_ID, "female");
       prompt = buildCustomStarterPrompt(customType);
     } else {
       const template = getBusinessTemplate(dto.businessTemplate);
       if (!template) throw new BadRequestException("Naməlum biznes şablonu");
       businessTemplate = template.id;
       businessLabel = template.label;
-      persona = defaultPersonaForTemplate(template.id, "female");
       prompt = template.starterPrompt;
     }
 
-    // Data is file-driven: the operator uploads Excel/CSV files afterwards
-    // (no auto-seeded empty collections).
+    // Catalog only: Leyla | Samir (extensible via OPERATOR_CATALOG)
+    const operator = resolveOperator(dto.operatorId || dto.operator || "leyla");
+    const voice = voiceForOperator(operator.id);
+
     return this.prisma.project.create({
       data: {
         organizationId,
@@ -79,11 +77,11 @@ export class ProjectsService {
         status: "draft",
         agent: {
           create: {
-            persona,
+            persona: operator.name,
             prompt,
             language: "az",
-            voiceProvider: DEFAULT_VOICE.provider,
-            voiceId: DEFAULT_VOICE.voiceId,
+            voiceProvider: voice.voiceProvider,
+            voiceId: voice.voiceId,
             greeting: null,
             active: false,
           },
@@ -128,33 +126,42 @@ export class ProjectsService {
   }
 
   async updateAgent(organizationId: string, projectId: string, dto: UpdateAgentDto) {
-    const project = await this.get(organizationId, projectId);
+    await this.get(organizationId, projectId);
     const voiceAffecting =
       dto.persona !== undefined ||
+      dto.operatorId !== undefined ||
       dto.prompt !== undefined ||
       dto.greeting !== undefined ||
       dto.language !== undefined ||
       dto.voiceProvider !== undefined ||
       dto.voiceId !== undefined;
 
-    const data: Record<string, unknown> = { ...dto };
+    const data: Record<string, unknown> = {};
 
-    // If persona name changed, drop stale greeting that still says the old name
-    // and force ElevenLabs re-sync on next call.
-    if (dto.persona !== undefined) {
-      const next = String(dto.persona).trim();
-      const prev = (project.agent?.persona || "").trim();
-      if (next && next !== prev) {
-        data.externalAgentId = null;
-        if (dto.greeting === undefined) {
-          data.greeting = null;
-        } else if (
-          dto.greeting &&
-          !String(dto.greeting).toLowerCase().includes(next.toLowerCase())
-        ) {
-          data.greeting = null;
-        }
+    if (dto.prompt !== undefined) data.prompt = dto.prompt;
+    if (dto.language !== undefined) data.language = dto.language;
+    if (dto.greeting !== undefined) data.greeting = dto.greeting;
+    if (dto.active !== undefined) data.active = dto.active;
+
+    // Catalog only: Leyla | Samir
+    if (dto.operatorId !== undefined || dto.persona !== undefined) {
+      const raw = String(dto.operatorId || dto.persona || "").trim();
+      const operator = resolveOperator(raw);
+      // Reject free-text that doesn't match catalog (resolveOperator falls back to Leyla)
+      const matched =
+        operator.name.toLowerCase() === raw.toLowerCase() ||
+        operator.id === raw.toLowerCase();
+      if (!matched) {
+        throw new BadRequestException("Operator yalnız Leyla və ya Samir ola bilər");
       }
+      data.persona = operator.name;
+      data.voiceProvider = operator.voiceProvider;
+      data.voiceId = operator.voiceId;
+      data.externalAgentId = null;
+      data.greeting = null;
+    } else {
+      if (dto.voiceProvider !== undefined) data.voiceProvider = dto.voiceProvider;
+      if (dto.voiceId !== undefined) data.voiceId = dto.voiceId;
     }
 
     if (voiceAffecting) {
@@ -171,7 +178,6 @@ export class ProjectsService {
   async setStatus(organizationId: string, projectId: string, status: ProjectStatus) {
     const project = await this.get(organizationId, projectId);
     if (status === "active" && !project.agent?.active) {
-      // Activating a project also activates its agent.
       await this.prisma.agent.update({ where: { projectId }, data: { active: true } });
     }
     await this.prisma.project.update({ where: { id: projectId }, data: { status } });

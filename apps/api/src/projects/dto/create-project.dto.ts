@@ -1,5 +1,5 @@
-import { IsOptional, IsString, MaxLength, MinLength, Validate } from "class-validator";
-import { isValidTemplateSelection } from "@aivoiceos/shared";
+import { IsIn, IsOptional, IsString, MaxLength, MinLength, Validate } from "class-validator";
+import { isValidTemplateSelection, OPERATOR_CATALOG } from "@aivoiceos/shared";
 import {
   ValidatorConstraint,
   ValidatorConstraintInterface,
@@ -14,6 +14,9 @@ class TemplateSelection implements ValidatorConstraintInterface {
     return "Naməlum biznes şablonu";
   }
 }
+
+const OPERATOR_IDS = OPERATOR_CATALOG.map((o) => o.id);
+const OPERATOR_NAMES = OPERATOR_CATALOG.map((o) => o.name);
 
 export class CreateProjectDto {
   @IsString()
@@ -30,4 +33,14 @@ export class CreateProjectDto {
   @IsString()
   @MaxLength(120)
   customType?: string;
+
+  /** Catalog operator id: leyla | samir (preferred). */
+  @IsOptional()
+  @IsIn(OPERATOR_IDS)
+  operatorId?: string;
+
+  /** Catalog operator display name: Leyla | Samir (alias). */
+  @IsOptional()
+  @IsIn(OPERATOR_NAMES)
+  operator?: string;
 }

@@ -4,41 +4,12 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, getToken } from "@/lib/api";
+import { OPERATOR_CATALOG, resolveOperator, voiceForOperator } from "@aivoiceos/shared";
 
 function formatPhone(e164: string): string {
   const d = String(e164 || "").replace(/[^\d]/g, "").replace(/^994/, "");
   if (d.length !== 9) return e164;
   return `+994 ${d.slice(0, 2)} ${d.slice(2, 5)} ${d.slice(5, 7)} ${d.slice(7, 9)}`;
-}
-
-const VOICES = [
-  { provider: "azure", voiceId: "az-AZ-BanuNeural", label: "Banu — qadın (Azərbaycan)" },
-  { provider: "azure", voiceId: "az-AZ-BabekNeural", label: "Babək — kişi (Azərbaycan)" },
-  { provider: "elevenlabs", voiceId: "elevenlabs-female", label: "ElevenLabs — qadın (premium)" },
-  { provider: "elevenlabs", voiceId: "elevenlabs-male", label: "ElevenLabs — kişi (premium)" },
-];
-
-/** Suggest matching voice when operator types a gendered name (manual override still allowed). */
-function suggestVoiceForPersona(persona: string): { provider: string; voiceId: string } | null {
-  const p = (persona || "").trim().toLowerCase();
-  const female = ["leyla", "nigar", "aysel", "gunel", "günel", "banu", "sevil", "narmin", "nərmin"];
-  const male = ["kamran", "tahir", "elnur", "elvin", "orxan", "tural", "murad", "babək", "babek", "anar", "ibrahim", "əli", "ali", "fuad", "rasim"];
-  const first = p.split(/\s+/)[0]?.replace(/[^a-zəğıöüçşüiı]/gi, "") || "";
-  const norm = first
-    .replace(/ə/g, "e")
-    .replace(/ı/g, "i")
-    .replace(/ö/g, "o")
-    .replace(/ü/g, "u")
-    .replace(/ç/g, "c")
-    .replace(/ş/g, "s")
-    .replace(/ğ/g, "g");
-  if (female.includes(first) || female.includes(norm) || /\bxanım\b/.test(p)) {
-    return { provider: "azure", voiceId: "az-AZ-BanuNeural" };
-  }
-  if (male.includes(first) || male.includes(norm) || /\bbəy\b|\bbey\b/.test(p)) {
-    return { provider: "azure", voiceId: "az-AZ-BabekNeural" };
-  }
-  return null;
 }
 
 export default function ProjectDetailPage() {
@@ -48,6 +19,7 @@ export default function ProjectDetailPage() {
 
   const [project, setProject] = useState<any>(null);
   const [agent, setAgent] = useState<any>(null);
+  const [operatorId, setOperatorId] = useState("leyla");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -67,13 +39,24 @@ export default function ProjectDetailPage() {
       .then((p) => {
         setProject(p);
         setAgent(p.agent);
+        setOperatorId(resolveOperator(p.agent?.persona).id);
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [id, router]);
 
-  function voiceKey(a: any) {
-    return `${a.voiceProvider}::${a.voiceId}`;
+  function selectOperator(nextId: string) {
+    const op = resolveOperator(nextId);
+    const voice = voiceForOperator(op.id);
+    setOperatorId(op.id);
+    setSaved(false);
+    setDirty(true);
+    setAgent({
+      ...agent,
+      persona: op.name,
+      voiceProvider: voice.voiceProvider,
+      voiceId: voice.voiceId,
+    });
   }
 
   async function save() {
@@ -81,38 +64,21 @@ export default function ProjectDetailPage() {
     setError("");
     setSaved(false);
     try {
-      const persona = String(agent.persona || "").trim();
-      if (!persona) {
-        setError("Operator adını yazın (məs: İbrahim, Kamran, Leyla)");
-        setSaving(false);
-        return;
-      }
-      // Prefer typed gender voice; fall back to name-based suggestion
-      const suggested = suggestVoiceForPersona(persona);
-      const voiceProvider = agent.voiceProvider || suggested?.provider || "azure";
-      const voiceId = agent.voiceId || suggested?.voiceId || "az-AZ-BanuNeural";
-      // Keep custom greeting only if it already contains this exact name
-      const typedGreeting = String(agent.greeting || "").trim();
-      const greeting =
-        typedGreeting && typedGreeting.toLowerCase().includes(persona.toLowerCase())
-          ? typedGreeting
-          : "";
+      const op = resolveOperator(operatorId);
       const updated = await api.updateAgent(id, {
-        persona,
+        operatorId: op.id,
+        persona: op.name,
         prompt: agent.prompt,
-        language: agent.language,
-        voiceProvider,
-        voiceId,
-        greeting,
+        language: agent.language || "az",
+        voiceProvider: op.voiceProvider,
+        voiceId: op.voiceId,
+        greeting: "",
       });
       setProject(updated);
-      setAgent({
-        ...updated.agent,
-        persona: updated.agent?.persona || persona,
-      });
+      setAgent(updated.agent);
+      setOperatorId(resolveOperator(updated.agent?.persona).id);
       setSaved(true);
       setDirty(false);
-      // Scroll save confirmation into view on mobile
       window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
       setError(e.message || "Saxlanılmadı");
@@ -176,6 +142,8 @@ export default function ProjectDetailPage() {
   if (loading) return <div className="center-screen muted">Yüklənir…</div>;
   if (!project) return <div className="center-screen error">{error || "Tapılmadı"}</div>;
 
+  const currentOp = resolveOperator(operatorId);
+
   return (
     <>
       <div className="topbar">
@@ -203,7 +171,7 @@ export default function ProjectDetailPage() {
 
         <section className="card grid">
           <div className="row" style={{ alignItems: "flex-start" }}>
-            <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>AI Agent</h2>
+            <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>AI Operator</h2>
             <div className="spacer" />
             <button className="btn primary" onClick={save} disabled={saving} style={{ minWidth: 140 }}>
               {saving ? "Saxlanır…" : "Yadda saxla"}
@@ -211,32 +179,33 @@ export default function ProjectDetailPage() {
           </div>
           {saved ? (
             <p style={{ color: "var(--ok)", margin: 0, fontWeight: 700 }}>
-              Yadda saxlanıldı ✓ — zəngdə ad: «{agent.persona}». İndi Test zəngə keçin.
+              Yadda saxlanıldı ✓ — zəngdə: «{currentOp.name}» · {project.name}
             </p>
           ) : null}
           {error ? <p className="error" style={{ margin: 0 }}>{error}</p> : null}
 
           <div>
-            <label>Operator adı (əl ilə) — zəngdə məhz bu ad çıxacaq</label>
-            <input
-              value={agent.persona || ""}
-              onChange={(e) => {
-                const persona = e.target.value;
-                const suggested = suggestVoiceForPersona(persona);
-                setSaved(false);
-                setDirty(true);
-                setAgent({
-                  ...agent,
-                  persona,
-                  ...(suggested
-                    ? { voiceProvider: suggested.provider, voiceId: suggested.voiceId }
-                    : {}),
-                });
-              }}
-              placeholder="Məs: İbrahim, Kamran, Leyla"
-            />
+            <label>Operator</label>
+            <div className="operator-picks" role="radiogroup" aria-label="Operator">
+              {OPERATOR_CATALOG.map((op) => (
+                <button
+                  key={op.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={operatorId === op.id}
+                  className={`operator-pick ${operatorId === op.id ? "selected" : ""}`}
+                  onClick={() => selectOperator(op.id)}
+                >
+                  <span className="operator-pick-name">{op.name}</span>
+                  <span className="operator-pick-meta">
+                    {op.gender === "female" ? "Qadın səs" : "Kişi səs"}
+                  </span>
+                </button>
+              ))}
+            </div>
             <p className="hint" style={{ marginBottom: 0 }}>
-              Adı yazın → <b>Yadda saxla</b> (yuxarı / aşağı sticky) → Test zəng. Saxlamadan zəng etməyin.
+              Hazırda yalnız <b>Leyla</b> və <b>Samir</b>. Seçin → <b>Yadda saxla</b> → Test zəng.
+              Salamda şirkət adı («{project.name}») + operator adı çıxacaq.
             </p>
           </div>
 
@@ -244,7 +213,7 @@ export default function ProjectDetailPage() {
             <div>
               <label>Dil</label>
               <select
-                value={agent.language}
+                value={agent.language || "az"}
                 onChange={(e) => {
                   setSaved(false);
                   setDirty(true);
@@ -258,44 +227,17 @@ export default function ProjectDetailPage() {
               </select>
             </div>
             <div>
-              <label>Səs (cins)</label>
-              <select
+              <label>Səs (avtomatik)</label>
+              <input
+                readOnly
                 value={
-                  VOICES.some((v) => `${v.provider}::${v.voiceId}` === voiceKey(agent))
-                    ? voiceKey(agent)
-                    : agent.voiceId?.toLowerCase().includes("male") ||
-                        agent.voiceId?.includes("Babek")
-                      ? "azure::az-AZ-BabekNeural"
-                      : "azure::az-AZ-BanuNeural"
+                  currentOp.gender === "female"
+                    ? "Qadın səs — Leyla"
+                    : "Kişi səs — Samir"
                 }
-                onChange={(e) => {
-                  const [provider, voiceId] = e.target.value.split("::");
-                  setSaved(false);
-                  setDirty(true);
-                  setAgent({ ...agent, voiceProvider: provider, voiceId });
-                }}
-              >
-                {VOICES.map((v) => (
-                  <option key={`${v.provider}::${v.voiceId}`} value={`${v.provider}::${v.voiceId}`}>
-                    {v.label}
-                  </option>
-                ))}
-              </select>
-              <p className="hint">Kişi ad (İbrahim/Kamran) → Babək. Qadın (Leyla) → Banu.</p>
+              />
+              <p className="hint">Səs operatora bağlıdır; əl ilə dəyişilmir.</p>
             </div>
-          </div>
-
-          <div>
-            <label>Salamlama (boş = avtomatik, adınızla)</label>
-            <input
-              value={agent.greeting || ""}
-              onChange={(e) => {
-                setSaved(false);
-                setDirty(true);
-                setAgent({ ...agent, greeting: e.target.value });
-              }}
-              placeholder="Boş buraxın — avtomatik: Salam… mən İbrahim…"
-            />
           </div>
 
           <div>
@@ -310,16 +252,20 @@ export default function ProjectDetailPage() {
             />
           </div>
 
-          <button className="btn primary" onClick={save} disabled={saving} style={{ width: "100%", fontSize: "1.05rem", padding: "0.9rem" }}>
+          <button
+            className="btn primary"
+            onClick={save}
+            disabled={saving}
+            style={{ width: "100%", fontSize: "1.05rem", padding: "0.9rem" }}
+          >
             {saving ? "Yadda saxlanılır…" : "Yadda saxla"}
           </button>
         </section>
 
-        {/* Sticky save bar — always visible on mobile while editing agent */}
         <div className="save-bar">
           <div className="save-bar-inner">
             <span className="muted" style={{ fontSize: "0.85rem" }}>
-              Ad: <b style={{ color: "var(--ink)" }}>{agent.persona || "—"}</b>
+              Operator: <b style={{ color: "var(--ink)" }}>{currentOp.name}</b>
             </span>
             <button className="btn primary" onClick={save} disabled={saving}>
               {saving ? "…" : saved ? "Saxlanıldı ✓" : "Yadda saxla"}
@@ -358,8 +304,7 @@ export default function ProjectDetailPage() {
                 </button>
               </div>
               <p className="hint">
-                Azercell / Bakcell / Nar / şəhər nömrəsi. Nömrə platformada saxlanılır; canlı zəng
-                yönləndirməsi Azərbaycan SIP provayderi qoşulduqdan sonra aktivləşəcək.
+                Azercell / Bakcell / Nar / şəhər nömrəsi. Canlı yönləndirmə SIP qoşulduqdan sonra.
               </p>
             </div>
           )}
@@ -370,7 +315,7 @@ export default function ProjectDetailPage() {
             <div>
               <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Bilik bazası / Data</h2>
               <p className="muted" style={{ margin: "0.3rem 0 0" }}>
-                Layihənin datası (otaqlar, stok, rezervlər və s.). Agent zəngdə buradan cavab verəcək.
+                Layihənin datası. Agent zəngdə buradan cavab verəcək.
               </p>
             </div>
             <div className="spacer" />
@@ -383,8 +328,7 @@ export default function ProjectDetailPage() {
             <div>
               <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Test zəng (voice)</h2>
               <p className="muted" style={{ margin: "0.3rem 0 0" }}>
-                Əvvəl yuxarıda adı yazıb <b>Yadda saxla</b> basın. Sonra zəng edin —
-                ekranda və salamda məhz «{agent?.persona || "…"}» çıxacaq.
+                Salam: «{project.name}» + «{currentOp.name}». Əvvəl <b>Yadda saxla</b>, sonra zəng.
               </p>
             </div>
             <div className="spacer" />
@@ -394,7 +338,7 @@ export default function ProjectDetailPage() {
               onClick={(e) => {
                 if (dirty) {
                   const ok = window.confirm(
-                    "Son dəyişikliyi hələ «Yadda saxla» etməmisiniz — zəngdə köhnə ad qala bilər. Yenə də keçilsin?",
+                    "Son dəyişikliyi hələ «Yadda saxla» etməmisiniz — zəngdə köhnə operator qala bilər. Yenə də keçilsin?",
                   );
                   if (!ok) e.preventDefault();
                 }
@@ -403,13 +347,6 @@ export default function ProjectDetailPage() {
               Test zəng →
             </Link>
           </div>
-        </section>
-
-        <section className="card">
-          <h2 className="title" style={{ fontSize: "1.05rem", marginTop: 0 }}>Növbəti mərhələlər</h2>
-          <p className="muted" style={{ margin: 0 }}>
-            Canlı +994 SIP yönləndirmə, CRM və analitika sonrakı versiyalarda (docs/ROADMAP.md).
-          </p>
         </section>
       </div>
     </>

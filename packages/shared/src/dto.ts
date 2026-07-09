@@ -42,10 +42,14 @@ export interface ProjectDto {
 export interface CreateProjectDto {
   name: string;
   businessTemplate: BusinessTemplateId;
+  /** Catalog operator id: leyla | samir */
+  operatorId?: string;
+  customType?: string;
 }
 
 export interface UpdateAgentDto {
   persona?: string;
+  operatorId?: string;
   prompt?: string;
   language?: string;
   voiceProvider?: VoiceProviderId;

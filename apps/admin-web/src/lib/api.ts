@@ -59,10 +59,20 @@ export const api = {
   templates: () => request<any[]>("/templates"),
   projects: () => request<any[]>("/projects"),
   project: (id: string) => request<any>(`/projects/${id}`),
-  createProject: (name: string, businessTemplate: string, customType?: string) =>
+  createProject: (
+    name: string,
+    businessTemplate: string,
+    customType?: string,
+    operatorId?: string,
+  ) =>
     request<any>("/projects", {
       method: "POST",
-      body: JSON.stringify({ name, businessTemplate, ...(customType ? { customType } : {}) }),
+      body: JSON.stringify({
+        name,
+        businessTemplate,
+        ...(customType ? { customType } : {}),
+        ...(operatorId ? { operatorId } : {}),
+      }),
     }),
   deleteProject: (id: string) => request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
   assignPhone: (id: string, number: string) =>
@@ -116,7 +126,9 @@ export const api = {
       projectName: string;
       businessLabel: string;
       operatorName: string;
+      operatorId?: string;
       operatorGender: "female" | "male" | "unknown";
+      companyName?: string;
       firstMessage: string;
       tools: string[];
     }>(`/projects/${pid}/voice/session`, { method: "POST", body: "{}" }),

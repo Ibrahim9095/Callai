@@ -1,11 +1,19 @@
 import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from "class-validator";
-import { VOICE_PROVIDERS, type VoiceProviderId } from "@aivoiceos/shared";
+import { OPERATOR_CATALOG, VOICE_PROVIDERS, type VoiceProviderId } from "@aivoiceos/shared";
+
+const OPERATOR_IDS = OPERATOR_CATALOG.map((o) => o.id);
+const OPERATOR_NAMES = OPERATOR_CATALOG.map((o) => o.name);
 
 export class UpdateAgentDto {
+  /** Catalog display name: Leyla | Samir */
   @IsOptional()
-  @IsString()
-  @MaxLength(200)
+  @IsIn(OPERATOR_NAMES)
   persona?: string;
+
+  /** Catalog id: leyla | samir (preferred from admin UI) */
+  @IsOptional()
+  @IsIn(OPERATOR_IDS)
+  operatorId?: string;
 
   @IsOptional()
   @IsString()

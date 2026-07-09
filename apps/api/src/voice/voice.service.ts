@@ -2,10 +2,9 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import {
   buildCallGreeting,
   buildIdentityPrompt,
-  exactPersonaName,
   extractPersonaName,
   getBusinessTemplate,
-  inferOperatorGender,
+  resolveOperator,
 } from "@aivoiceos/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { KnowledgeService } from "../knowledge/knowledge.service";
@@ -44,7 +43,7 @@ export class VoiceService {
   }
 
   async createSession(organizationId: string, projectId: string) {
-    // Always re-read from DB so the latest saved persona is used (no stale cache).
+    // Always re-read from DB so the latest saved operator is used.
     const project = await this.loadProject(organizationId, projectId);
 
     if (!elevenConfigured()) {
@@ -55,12 +54,33 @@ export class VoiceService {
 
     const agent = project.agent!;
     const businessLabel = this.businessLabelOf(project);
-    const persona = exactPersonaName(agent.persona);
-    const gender = inferOperatorGender(persona, agent.voiceId);
+    // Catalog only: Leyla / Samir (never invent other names)
+    const operator = resolveOperator(agent.persona);
+    const persona = operator.name;
+    const gender = operator.gender;
+    const companyName = (project.name || businessLabel || "").trim();
 
-    // Drop stale greeting that still mentions an old name (e.g. Leyla after rename to Kamran)
+    // Persist normalized catalog name if DB had a free-text / legacy value
+    if ((agent.persona || "").trim() !== persona) {
+      await this.prisma.agent.update({
+        where: { projectId },
+        data: {
+          persona,
+          voiceProvider: operator.voiceProvider,
+          voiceId: operator.voiceId,
+          externalAgentId: null,
+          greeting: null,
+        },
+      });
+    }
+
+    // Drop stale custom greeting that doesn't match this operator + company
     let greeting = (agent.greeting || "").trim() || null;
-    if (greeting && !greeting.toLowerCase().includes(persona.toLowerCase())) {
+    if (
+      greeting &&
+      (!greeting.toLowerCase().includes(persona.toLowerCase()) ||
+        (companyName && !greeting.toLowerCase().includes(companyName.toLowerCase().slice(0, 6))))
+    ) {
       greeting = null;
       await this.prisma.agent.update({
         where: { projectId },
@@ -72,17 +92,19 @@ export class VoiceService {
       persona,
       businessLabel,
       templateId: project.businessTemplate,
-      voiceId: agent.voiceId,
+      voiceId: operator.voiceId,
       customGreeting: greeting,
       projectName: project.name,
+      companyName,
     });
 
     const identity = buildIdentityPrompt({
       persona,
       businessLabel,
       templateId: project.businessTemplate,
-      voiceId: agent.voiceId,
+      voiceId: operator.voiceId,
       projectName: project.name,
+      companyName,
       firstMessage,
     });
 
@@ -91,14 +113,14 @@ export class VoiceService {
       AZ_PREMIUM_STYLE,
       (agent.prompt || "").trim(),
       VOICE_RUNTIME_RULES,
-      `SƏNİN ADIN İNDİ: «${persona}». Başqa ad (Leyla və s.) demə.`,
-      "ZƏNGİ HEÇ VAXT KƏSMƏ. Yalnız müştəri bitirir.",
+      `SƏNİN ADIN: «${persona}». ŞİRKƏT: «${companyName}». Başqa ad demə.`,
+      "ZƏNGİ HEÇ VAXT KƏSMƏ. Salamdan sonra dinlə. Yalnız müştəri bitirir.",
     ]
       .filter(Boolean)
       .join("\n\n");
 
-    // After "Yadda saxla", externalAgentId is cleared → recreate with new name/voice.
-    // Otherwise PATCH the cached agent with fresh first_message + prompt (no stale Leyla).
+    // After operator change, externalAgentId is cleared → recreate with new name/voice.
+    // Otherwise PATCH cached agent with fresh first_message + prompt.
     const { agent_id, recreated } = await ensureProjectElevenAgent({
       projectId: project.id,
       projectName: project.name,
@@ -106,13 +128,17 @@ export class VoiceService {
       prompt: fullPrompt,
       firstMessage,
       language: agent.language || "az",
-      keywords: [persona, extractPersonaName(persona), project.name, businessLabel].filter(
-        Boolean,
-      ) as string[],
+      keywords: [
+        persona,
+        extractPersonaName(persona),
+        project.name,
+        businessLabel,
+        companyName,
+      ].filter(Boolean) as string[],
       cachedAgentId: agent.externalAgentId,
       forceRecreate: agent.externalAgentId == null,
-      catalogVoiceId: agent.voiceId,
-      voiceProvider: agent.voiceProvider,
+      catalogVoiceId: operator.voiceId,
+      voiceProvider: operator.voiceProvider,
       gender,
     });
 
@@ -131,7 +157,8 @@ export class VoiceService {
       projectId: project.id,
       projectName: project.name,
       businessLabel,
-      // Exact typed name — never "Leyla xanım"
+      companyName,
+      operatorId: operator.id,
       operatorName: persona,
       operatorGender: gender,
       firstMessage,

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, clearToken, getToken } from "@/lib/api";
+import { OPERATOR_CATALOG } from "@aivoiceos/shared";
 
 type Template = { id: string; label: string; description: string };
 type Project = {
@@ -12,7 +13,7 @@ type Project = {
   businessTemplate: string;
   businessLabel?: string | null;
   status: "draft" | "active" | "paused";
-  agent?: { active: boolean; voiceProvider: string; voiceId: string } | null;
+  agent?: { active: boolean; persona?: string; voiceProvider: string; voiceId: string } | null;
   phoneNumber?: { e164: string; operator?: string | null; status: string } | null;
 };
 
@@ -25,6 +26,7 @@ export default function ProjectsPage() {
   const [name, setName] = useState("");
   const [tmpl, setTmpl] = useState("hotel");
   const [customType, setCustomType] = useState("");
+  const [operatorId, setOperatorId] = useState("leyla");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -53,10 +55,16 @@ export default function ProjectsPage() {
     }
     setCreating(true);
     try {
-      const p = await api.createProject(name.trim(), tmpl, tmpl === CUSTOM ? customType.trim() : undefined);
+      const p = await api.createProject(
+        name.trim(),
+        tmpl,
+        tmpl === CUSTOM ? customType.trim() : undefined,
+        operatorId,
+      );
       setProjects((prev) => [p, ...prev]);
       setName("");
       setCustomType("");
+      setOperatorId("leyla");
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -89,17 +97,16 @@ export default function ProjectsPage() {
         <section className="card">
           <h2 className="title" style={{ fontSize: "1.15rem" }}>Yeni layihə (biznes)</h2>
           <p className="muted" style={{ marginTop: 0 }}>
-            Biznes tipini seçin — agent avtomatik həmin sahə üçün qurulacaq. Siyahıda yoxdursa
-            «Digər»i seçib özünüz yazın.
+            Layihə adı şirkət kimi salamda çıxır. Operator yalnız <b>Leyla</b> və ya <b>Samir</b>.
           </p>
           <form onSubmit={createProject} className="grid cols-2">
             <div>
-              <label htmlFor="name">Layihə adı</label>
+              <label htmlFor="name">Layihə / şirkət adı</label>
               <input
                 id="name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Məs. Grand Baku Hotel"
+                placeholder="Məs. Premium Auto Service"
                 required
                 minLength={2}
               />
@@ -114,6 +121,27 @@ export default function ProjectsPage() {
               </select>
             </div>
 
+            <div style={{ gridColumn: "1 / -1" }}>
+              <label>Operator</label>
+              <div className="operator-picks" role="radiogroup" aria-label="Operator">
+                {OPERATOR_CATALOG.map((op) => (
+                  <button
+                    key={op.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={operatorId === op.id}
+                    className={`operator-pick ${operatorId === op.id ? "selected" : ""}`}
+                    onClick={() => setOperatorId(op.id)}
+                  >
+                    <span className="operator-pick-name">{op.name}</span>
+                    <span className="operator-pick-meta">
+                      {op.gender === "female" ? "Qadın səs" : "Kişi səs"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {tmpl === CUSTOM ? (
               <div style={{ gridColumn: "1 / -1" }}>
                 <label htmlFor="customType">Biznes növü (manual)</label>
@@ -121,12 +149,8 @@ export default function ProjectsPage() {
                   id="customType"
                   value={customType}
                   onChange={(e) => setCustomType(e.target.value)}
-                  placeholder="Məs. Təkər təmiri, Kondisioner servisi, Fotostudiya…"
+                  placeholder="Məs. Təkər təmiri, Kondisioner servisi…"
                 />
-                <p className="hint">
-                  Agent bu sahə üçün ilkin təlimatla qurulacaq — sonra layihə səhifəsində promptu
-                  tam özünüzə uyğun dəyişə bilərsiniz.
-                </p>
               </div>
             ) : null}
 
@@ -153,6 +177,7 @@ export default function ProjectsPage() {
                     <h3>{p.name}</h3>
                     <small>
                       {label(p)}
+                      {p.agent?.persona ? ` · ${p.agent.persona}` : ""}
                       {p.phoneNumber?.e164 ? ` · ☎ ${p.phoneNumber.e164}` : " · nömrə yoxdur"}
                     </small>
                   </div>

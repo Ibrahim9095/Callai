@@ -146,8 +146,8 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         keywords,
       },
       turn: {
-        // Patient: don't cut the caller mid-sentence (2nd-call quality).
-        turn_timeout: 12,
+        // Patient listening — never cut the caller; never auto-end after greeting.
+        turn_timeout: 20,
         silence_end_call_timeout: -1,
         turn_eagerness: "patient",
         speculative_turn: true,
@@ -155,9 +155,9 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         spelling_patience: "auto",
         soft_timeout_config: {
           // ElevenLabs soft timeout must stay ≤ 8s
-          timeout_seconds: 7,
+          timeout_seconds: 7.5,
           message: "Buyurun, sizi dinləyirəm.",
-          max_soft_timeouts_per_generation: 1,
+          max_soft_timeouts_per_generation: 2,
         },
       },
       conversation: {

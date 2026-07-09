@@ -1,89 +1,141 @@
 /**
- * Operator helpers — persona is EXACTLY what the operator typed in the panel.
- * UI and greeting never invent "xanım"/"bəy" or a default name like Leyla.
- * Gender is only used to pick male/female voice + prompt tone.
+ * Operator identity — production catalog.
+ *
+ * Active operators today: Leyla (female) and Samir (male).
+ * Catalog is data-driven so future operators can be added without rewriting call flow.
+ * Never invent random names (Aygün, Kamran, etc.) at runtime.
  */
 
-const FEMALE_NAMES = new Set(
-  [
-    "leyla", "aygun", "aygün", "gunel", "günel", "nigar", "sevil", "sevinc",
-    "aysel", "aysəl", "narmin", "nərmin", "gunay", "günay", "lala", "lalə",
-    "sabina", "kamala", "kamalə", "fatima", "fatimə", "maryam", "məryəm",
-    "banu", "ulviyye", "ülviyyə", "mehriban", "zumrud", "zümrüd", "konul",
-    "könül", "tarana", "təranə", "fidan", "gulnar", "gülnar", "gulnara",
-    "gülnarə", "rena", "sofya", "anna", "marina", "elena", "nargiz", "nərgiz",
-    "humay", "hümay", "aysu", "səidə", "seide", "dilarə", "dilare", "afaq",
-  ].map((s) => s.toLowerCase()),
-);
+export type OperatorGender = "female" | "male";
 
-const MALE_NAMES = new Set(
-  [
-    "elvin", "elnur", "rasad", "rəşad", "rashad", "orxan", "orkhan", "tural",
-    "kamran", "murad", "farid", "fərid", "ferid", "nijat", "nicat", "rufat",
-    "rüfət", "babek", "babək", "anar", "samir", "elchin", "elçin", "elcin",
-    "javad", "cavad", "huseyn", "hüseyn", "ali", "əli", "ibrahim", "isa",
-    "mahir", "nurlan", "tofig", "tofiq", "tahir", "tahır", "rasim", "elshan",
-    "elşən", "elsad", "elşad", "fuad", "kenan", "kənan", "zahir", "zahid",
-    "namig", "namiq", "ilkin", "ilham", "ramil", "ramiz", "sadiq", "sadıq",
-    "emil", "ahmad", "əhməd", "ahmed", "mehman", "orkhan",
-  ].map((s) => s.toLowerCase()),
-);
-
-export type OperatorGender = "female" | "male" | "unknown";
-
-function normalizeAz(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/ə/g, "e")
-    .replace(/ı/g, "i")
-    .replace(/ö/g, "o")
-    .replace(/ü/g, "u")
-    .replace(/ç/g, "c")
-    .replace(/ş/g, "s")
-    .replace(/ğ/g, "g");
+export interface OperatorPreset {
+  /** Stable id for APIs / future admin CRUD (e.g. "leyla"). */
+  id: string;
+  /** Display + spoken name (exact). */
+  name: string;
+  gender: OperatorGender;
+  /** Default catalog voice for this operator. */
+  voiceProvider: "azure" | "elevenlabs";
+  voiceId: string;
+  label: string;
 }
 
-/** Exact trimmed persona as typed — never rewrite. */
+/**
+ * Active operator catalog. Extend this list (or load from DB later) to add operators
+ * without changing greeting / session code paths.
+ */
+export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
+  {
+    id: "leyla",
+    name: "Leyla",
+    gender: "female",
+    voiceProvider: "azure",
+    voiceId: "az-AZ-BanuNeural",
+    label: "Leyla — qadın",
+  },
+  {
+    id: "samir",
+    name: "Samir",
+    gender: "male",
+    voiceProvider: "azure",
+    voiceId: "az-AZ-BabekNeural",
+    label: "Samir — kişi",
+  },
+] as const;
+
+export const DEFAULT_OPERATOR_ID = "leyla";
+
+const BY_ID = new Map(OPERATOR_CATALOG.map((o) => [o.id, o]));
+const BY_NAME = new Map(OPERATOR_CATALOG.map((o) => [o.name.toLowerCase(), o]));
+
+export function listOperators(): OperatorPreset[] {
+  return [...OPERATOR_CATALOG];
+}
+
+export function getOperatorById(id: string | null | undefined): OperatorPreset | null {
+  if (!id) return null;
+  return BY_ID.get(String(id).trim().toLowerCase()) || null;
+}
+
+export function getOperatorByName(name: string | null | undefined): OperatorPreset | null {
+  if (!name) return null;
+  const raw = String(name).trim().toLowerCase();
+  return BY_NAME.get(raw) || getOperatorById(raw);
+}
+
+/** Resolve any stored persona string to a catalog operator (fallback: Leyla). */
+export function resolveOperator(personaOrId: string | null | undefined): OperatorPreset {
+  return (
+    getOperatorByName(personaOrId) ||
+    getOperatorById(personaOrId) ||
+    getOperatorById(DEFAULT_OPERATOR_ID)!
+  );
+}
+
+export function isAllowedOperatorName(name: string | null | undefined): boolean {
+  return Boolean(getOperatorByName(name));
+}
+
+/** Exact spoken/display name from catalog — never rewrite to a random name. */
 export function exactPersonaName(persona: string | null | undefined): string {
-  const raw = String(persona ?? "").trim();
-  return raw || "Operator";
+  return resolveOperator(persona).name;
 }
 
-/** First token for gender lookup only (strips trailing honorific if user typed it). */
 export function extractPersonaName(persona: string): string {
-  return exactPersonaName(persona)
-    .replace(/\s+(xanım|xanim|bəy|bey|cənab|cenab)\s*$/i, "")
-    .trim()
-    .split(/\s+/)[0] || "";
+  return exactPersonaName(persona);
 }
 
 export function inferOperatorGender(
   persona: string,
-  voiceId?: string | null,
+  _voiceId?: string | null,
 ): OperatorGender {
-  const p = exactPersonaName(persona).toLowerCase();
-  if (/\bxanım\b|\bxanim\b|\bqadın\b/.test(p)) return "female";
-  if (/\bbəy\b|\bbey\b|\bkişi\b|\bcənab\b/.test(p)) return "male";
+  return resolveOperator(persona).gender;
+}
 
-  const first = extractPersonaName(persona).toLowerCase().replace(/[^a-zəğıöüçşüiı]/gi, "");
-  if (first) {
-    const norm = normalizeAz(first);
-    if (FEMALE_NAMES.has(first) || FEMALE_NAMES.has(norm)) return "female";
-    if (MALE_NAMES.has(first) || MALE_NAMES.has(norm)) return "male";
-  }
+/** @deprecated Use exactPersonaName */
+export function formatOperatorDisplayName(persona: string, _gender?: OperatorGender): string {
+  return exactPersonaName(persona);
+}
 
-  const v = (voiceId || "").toLowerCase();
-  if (v.includes("banu") || v.includes("female")) return "female";
-  if (v.includes("babek") || v.includes("babək") || v.includes("male")) return "male";
-  return "unknown";
+/** "Leylayam" / "Samirəm" — first-person present for greeting. */
+export function operatorSelfForm(persona: string | null | undefined): string {
+  const op = resolveOperator(persona);
+  if (op.id === "leyla") return "Leylayam";
+  if (op.id === "samir") return "Samirəm";
+  // Future operators: "{Name}əm" / "{Name}yam" heuristic
+  const n = op.name;
+  const last = n.slice(-1).toLowerCase();
+  if ("aeıioöuüə".includes(last)) return `${n}yam`;
+  return `${n}əm`;
 }
 
 /**
- * @deprecated Use exactPersonaName — call UI must show the typed name only.
- * Kept for compatibility; returns exact name WITHOUT xanım/bəy.
+ * Ablative for company/project name in greeting.
+ * Spec examples: "Premium Auto Service-dən", "Moon Hoteldən", "ABC Klinikasından", "Fashion Store-dan"
  */
-export function formatOperatorDisplayName(persona: string, _gender?: OperatorGender): string {
-  return exactPersonaName(persona);
+export function companyAblative(companyName: string): string {
+  const name = String(companyName || "").trim() || "şirkət";
+  if (/(dan|dən|tan|tən)$/i.test(name)) return name;
+
+  // Known Azerbaijani endings — attach without hyphen
+  if (/klinikası$/i.test(name)) return name.replace(/klinikası$/i, "Klinikasından");
+  if (/klinika$/i.test(name)) return `${name}dan`;
+  if (/otel$/i.test(name) || /hotel$/i.test(name)) return `${name}dən`;
+  if (/mağaza$/i.test(name) || /servis$/i.test(name)) return `${name}dən`;
+
+  const last = name.slice(-1).toLowerCase();
+  const frontVowels = "eəiöü";
+  // Multi-word / Latin brands: hyphen + -dən/-dan (matches Premium Auto Service / Fashion Store)
+  if (/\s/.test(name) || /[A-Za-z]/.test(name)) {
+    if (/\bstore\b/i.test(name) || /a$/i.test(name)) return `${name}-dan`;
+    const useDen =
+      frontVowels.includes(last) ||
+      /e$/i.test(name) ||
+      /\b(service|hotel|clinic)\b/i.test(name);
+    return useDen ? `${name}-dən` : `${name}-dan`;
+  }
+  if ("aıou".includes(last)) return `${name}dan`;
+  return `${name}dən`;
 }
 
 export function roleIntroduction(
@@ -107,8 +159,8 @@ export function roleIntroduction(
 }
 
 /**
- * Greeting uses EXACT persona (Kamran / İbrahim / Leyla) — no auto honorific.
- * Ignores stale custom greeting that mentions a different name.
+ * Production greeting — company + operator self-form.
+ * Example: "Salam. Premium Auto Service-dən mən Samirəm. Buyurun, sizə necə kömək edə bilərəm?"
  */
 export function buildCallGreeting(opts: {
   persona: string;
@@ -117,19 +169,29 @@ export function buildCallGreeting(opts: {
   voiceId?: string | null;
   customGreeting?: string | null;
   projectName?: string | null;
+  /** Preferred company/brand name; defaults to projectName then businessLabel. */
+  companyName?: string | null;
 }): string {
-  const name = exactPersonaName(opts.persona);
-  const role = roleIntroduction(opts.businessLabel, opts.templateId);
-  const place = (opts.projectName || opts.businessLabel || "").trim();
+  const op = resolveOperator(opts.persona);
+  const company = (
+    opts.companyName ||
+    opts.projectName ||
+    opts.businessLabel ||
+    ""
+  ).trim();
 
   const custom = (opts.customGreeting || "").trim();
-  // Keep custom only if it clearly contains THIS exact name (case-insensitive)
-  if (custom.length >= 12 && custom.toLowerCase().includes(name.toLowerCase())) {
+  if (
+    custom.length >= 12 &&
+    custom.toLowerCase().includes(op.name.toLowerCase()) &&
+    (!company || custom.toLowerCase().includes(company.toLowerCase().slice(0, 8)))
+  ) {
     return custom;
   }
 
-  const where = place ? `${place}-dən ` : "";
-  return `Salam, ${where}mən ${name}. ${capitalize(role)}. Buyurun, necə kömək edə bilərəm?`;
+  const from = company ? `${companyAblative(company)} ` : "";
+  const self = operatorSelfForm(op.name);
+  return `Salam. ${from}mən ${self}. Buyurun, sizə necə kömək edə bilərəm?`;
 }
 
 export function buildIdentityPrompt(opts: {
@@ -138,27 +200,32 @@ export function buildIdentityPrompt(opts: {
   templateId?: string | null;
   voiceId?: string | null;
   projectName?: string | null;
+  companyName?: string | null;
   firstMessage: string;
 }): string {
-  const name = exactPersonaName(opts.persona);
-  const gender = inferOperatorGender(opts.persona, opts.voiceId);
+  const op = resolveOperator(opts.persona);
+  const company = (
+    opts.companyName ||
+    opts.projectName ||
+    opts.businessLabel ||
+    "şirkət"
+  ).trim();
   const role = roleIntroduction(opts.businessLabel, opts.templateId);
   const genderLine =
-    gender === "female"
-      ? "Sən qadın operatorsan; qadın səsi ilə danış."
-      : gender === "male"
-        ? "Sən kişi operatorsan; kişi səsi ilə danış."
-        : "Paneldə seçilmiş səslə danış.";
+    op.gender === "female"
+      ? "Sən qadın operatorsan; yalnız qadın səsi ilə danış. Səsini dəyişmə."
+      : "Sən kişi operatorsan; yalnız kişi səsi ilə danış. Səsini dəyişmə.";
 
   return `
-SƏNİN ADIN (dəyişmə — panelden əl ilə yazılıb):
-- Adın dəqiq budur: «${name}»
-- Özünü yalnız «${name}» kimi təqdim et. «Leyla», «xanım», «bəy» və ya başqa ad UYDURMA.
+SƏNİN KİMLİYİN (dəyişmə — Admin paneldən seçilib):
+- Adın dəqiq budur: «${op.name}» (operator id: ${op.id})
+- Özünü yalnız «${op.name}» kimi təqdim et. Başqa ad (Aygün, Nigar, Kamran, Elvin və s.) UYDURMA.
+- Şirkət / layihə: «${company}»
 - İşin: ${capitalize(role)}
-- Layihə: ${opts.projectName || opts.businessLabel || "biznes"}
 - ${genderLine}
 - İlk cümlən məhz: «${opts.firstMessage}»
-- Heç vaxt başqa adla danışma.
+- Hər cavabda kimliyini unutma: sən ${op.name}-sən, ${company} üçün işləyirsən.
+- Heç vaxt başqa adla danışma. Zəng boyu eyni ad qal.
 `.trim();
 }
 
@@ -167,15 +234,26 @@ function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/** Default operator for new projects (Leyla). Gender arg kept for API compat. */
 export function defaultPersonaForTemplate(
   _templateId: string,
-  gender: OperatorGender = "female",
+  gender: OperatorGender | "unknown" = "female",
 ): string {
-  return gender === "male" ? "Kamran" : "Leyla";
+  if (gender === "male") return resolveOperator("samir").name;
+  return resolveOperator("leyla").name;
+}
+
+export function voiceForOperator(personaOrId: string | null | undefined): {
+  voiceProvider: string;
+  voiceId: string;
+} {
+  const op = resolveOperator(personaOrId);
+  return { voiceProvider: op.voiceProvider, voiceId: op.voiceId };
 }
 
 export function isJobTitlePersona(persona: string): boolean {
-  const p = exactPersonaName(persona).toLowerCase();
+  const p = String(persona || "").trim().toLowerCase();
+  if (getOperatorByName(p)) return false;
   if (/\boperatoru?\b|\bresepşn\b|\bqeydiyyat\b/.test(p)) return true;
   return p.split(/\s+/).length >= 3;
 }

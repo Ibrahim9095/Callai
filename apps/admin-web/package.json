@@ -9,6 +9,7 @@
     "lint": "echo \"(admin-web) no lint yet\""
   },
   "dependencies": {
+    "@aivoiceos/shared": "*",
     "@elevenlabs/client": "^1.14.1",
     "next": "^15.1.4",
     "react": "^19.0.0",

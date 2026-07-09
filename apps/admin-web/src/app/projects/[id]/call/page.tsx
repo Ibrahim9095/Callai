@@ -268,7 +268,7 @@ export default function TestCallPage() {
       const liveName = String(session.operatorName || "").trim();
       if (liveName) setOperatorName(liveName);
       setOperatorGender(session.operatorGender || "unknown");
-      setBusinessLabel(session.businessLabel || businessLabel);
+      setBusinessLabel(session.companyName || session.businessLabel || businessLabel);
       setProjectName(session.projectName || projectName);
 
       localStreamRef.current = mic;
@@ -409,8 +409,8 @@ export default function TestCallPage() {
 
           {phase === "idle" || phase === "ended" || phase === "error" ? (
             <p className="call-hint">
-              Layihədə operator adını yazın (Kamran, İbrahim, Leyla…) → Yadda saxla → burada zəng edin.
-              Ekranda və salamlamada məhz o ad görünəcək. Zəngi yalnız siz bitirin.
+              Layihədə operator seçin (Leyla və ya Samir) → Yadda saxla → burada zəng edin.
+              Salamda şirkət adı + operator adı çıxır. Zəngi yalnız siz bitirin — AI zəngi kəsmir.
             </p>
           ) : null}
         </div>
