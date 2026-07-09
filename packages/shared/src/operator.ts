@@ -24,7 +24,7 @@ export interface OperatorPreset {
  * Active operator catalog. Extend this list (or load from DB later) to add operators
  * without changing greeting / session code paths.
  *
- * Voice IDs: ElevenLabs Fili (female) / Chris (male) — override via env on API.
+ * Voice IDs: ElevenLabs Bella (female) / Chris (male) — override via env on API.
  */
 export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
   {
@@ -32,7 +32,7 @@ export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
     name: "Leyla",
     gender: "female",
     voiceProvider: "elevenlabs",
-    voiceId: "FDs1ZX5J4e4f2c2erxtW",
+    voiceId: "hpp4J3VqNfWAUOO0d1Us",
     label: "Leyla — qadın",
   },
   {

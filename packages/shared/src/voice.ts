@@ -29,8 +29,8 @@ export interface VoiceOption {
 export const VOICE_CATALOG: VoiceOption[] = [
   {
     provider: "elevenlabs",
-    voiceId: "FDs1ZX5J4e4f2c2erxtW",
-    label: "Leyla (ElevenLabs v3, qadın) — Fili",
+    voiceId: "hpp4J3VqNfWAUOO0d1Us",
+    label: "Leyla (ElevenLabs v3, qadın) — Bella",
     gender: "female",
     language: "az",
     premium: true,
@@ -38,7 +38,7 @@ export const VOICE_CATALOG: VoiceOption[] = [
   {
     provider: "elevenlabs",
     voiceId: "iP95p4xoKVk53GoZ742B",
-    label: "Samir (ElevenLabs v3, kişi)",
+    label: "Samir (ElevenLabs v3, kişi) — Chris",
     gender: "male",
     language: "az",
     premium: true,
@@ -94,7 +94,7 @@ export function resolveElevenLabsVoiceId(opts: {
     lower.includes("male") ||
     lower.includes("samir") ||
     opts.gender === "male";
-  return wantMale ? "iP95p4xoKVk53GoZ742B" : "FDs1ZX5J4e4f2c2erxtW";
+  return wantMale ? "iP95p4xoKVk53GoZ742B" : "hpp4J3VqNfWAUOO0d1Us";
 }
 
 /** Resolve OpenAI Realtime voice id from catalog / gender. */
@@ -153,6 +153,7 @@ export function voiceGenderFromCatalog(voiceId?: string | null): "female" | "mal
     v.includes("banu") ||
     v.includes("marin") ||
     v.includes("female") ||
+    v === "hpp4j3vqnfwauoo0d1us" ||
     v === "fds1zx5j4e4f2c2erxtw"
   ) {
     return "female";

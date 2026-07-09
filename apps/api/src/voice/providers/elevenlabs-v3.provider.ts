@@ -65,12 +65,16 @@ export function elevenLlm(): string {
   return (process.env.ELEVENLABS_LLM || "gemini-2.5-flash").trim();
 }
 
-/** Fili — warm female (best AZ-adjacent phonetics on starter plans). */
+/** Bella — professional warm female (Leyla). Override via env. */
 export function elevenVoiceFemale(): string {
-  return (process.env.ELEVENLABS_VOICE_ID || process.env.ELEVENLABS_VOICE_ID_FEMALE || "FDs1ZX5J4e4f2c2erxtW").trim();
+  return (
+    process.env.ELEVENLABS_VOICE_ID ||
+    process.env.ELEVENLABS_VOICE_ID_FEMALE ||
+    "hpp4J3VqNfWAUOO0d1Us"
+  ).trim();
 }
 
-/** Male default (Chris / configurable). */
+/** Chris — charming conversational male (Samir). Override via env. */
 export function elevenVoiceMale(): string {
   return (process.env.ELEVENLABS_VOICE_ID_MALE || "iP95p4xoKVk53GoZ742B").trim();
 }
