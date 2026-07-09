@@ -10,7 +10,7 @@ import { VoiceService } from "./voice.service";
 export class VoiceController {
   constructor(private readonly voice: VoiceService) {}
 
-  /** Browser WebRTC test-call session (ElevenLabs token + tool list). */
+  /** Browser voice test-call session (ElevenLabs WebSocket signed URL + tools). */
   @MinRole("editor")
   @Post("session")
   createSession(@CurrentUser() user: RequestUser, @Param("projectId") projectId: string) {

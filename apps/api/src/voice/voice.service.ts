@@ -17,7 +17,7 @@ import { AGENT_TOOL_NAMES, type AgentToolName } from "./agent-tools";
 import {
   elevenConfigured,
   ensureProjectElevenAgent,
-  getElevenConversationToken,
+  getElevenSignedUrl,
 } from "./elevenlabs.adapter";
 import {
   inactiveProjectMessage,
@@ -159,10 +159,14 @@ export class VoiceService {
       });
     }
 
-    const { token } = await getElevenConversationToken(agent_id);
+    // Production transport: WebSocket signed URL (not LiveKit WebRTC).
+    // WebRTC DataChannels abort when the agent participant leaves the room
+    // right after first_message — that killed the call after greeting.
+    const { signedUrl } = await getElevenSignedUrl(agent_id);
     return {
       provider: "elevenlabs" as const,
-      token,
+      connectionType: "websocket" as const,
+      signedUrl,
       agent_id,
       projectId: project.id,
       projectName: project.name,

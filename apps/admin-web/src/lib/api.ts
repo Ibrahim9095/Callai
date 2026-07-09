@@ -120,7 +120,9 @@ export const api = {
   voiceSession: (pid: string) =>
     request<{
       provider: string;
-      token: string;
+      connectionType: "websocket" | "webrtc";
+      signedUrl: string;
+      token?: string;
       agent_id: string;
       projectId: string;
       projectName: string;

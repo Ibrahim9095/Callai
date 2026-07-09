@@ -254,4 +254,22 @@ export async function getElevenConversationToken(agentId: string): Promise<{ tok
   return { token: data.token as string };
 }
 
+/**
+ * Signed WebSocket URL for Conversational AI.
+ * Prefer this over LiveKit WebRTC: agent leave after greeting tears down
+ * LiveKit PeerConnection → "Unknown DataChannel error on reliable/lossy".
+ * WebSocket keeps the session open for the full conversation loop.
+ */
+export async function getElevenSignedUrl(agentId: string): Promise<{ signedUrl: string }> {
+  if (!elevenKey()) throw new Error("ELEVENLABS_API_KEY təyin edilməyib");
+  const res = await fetch(
+    `${ELEVEN_API}/convai/conversation/get_signed_url?agent_id=${encodeURIComponent(agentId)}`,
+    { headers: { "xi-api-key": elevenKey() } },
+  );
+  const data = await res.json();
+  if (!res.ok) throw new Error(formatError(data) || "Signed URL alınmadı");
+  if (!data.signed_url) throw new Error("Signed URL boş qayıtdı");
+  return { signedUrl: data.signed_url as string };
+}
+
 export { AZ_PREMIUM_STYLE, VOICE_RUNTIME_RULES };

@@ -1,3 +1,13 @@
+/**
+ * Voice call session controller — production lifecycle.
+ *
+ * Transport: ElevenLabs WebSocket (signed URL), NOT LiveKit WebRTC.
+ * Why: after first_message the agent participant can leave the LiveKit room;
+ * PeerConnection teardown fires "Unknown DataChannel error on reliable/lossy"
+ * and the conversation dies. WebSocket keeps the duplex session open until
+ * the user hangs up or a hard error occurs.
+ */
+
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -8,7 +18,16 @@ import { api, getToken } from "@/lib/api";
 
 const TOOL_NAMES = ["list_collections", "search_records", "create_record", "update_record"] as const;
 
-type Phase = "idle" | "ringing" | "connecting" | "live" | "listening" | "speaking" | "tool" | "ended" | "error";
+type Phase =
+  | "idle"
+  | "ringing"
+  | "connecting"
+  | "live"
+  | "listening"
+  | "speaking"
+  | "tool"
+  | "ended"
+  | "error";
 type Line = { role: "user" | "assistant" | "system"; text: string };
 
 function createRingtone(ctx: AudioContext) {
@@ -60,6 +79,18 @@ function errMessage(err: unknown): string {
   return "Naməlum xəta";
 }
 
+function isSoftVoiceError(message: string): boolean {
+  const m = (message || "").trim();
+  if (!m || m === "{}" || m === "[object Object]") return true;
+  return (
+    /unknown error/i.test(m) ||
+    /error_type/i.test(m) ||
+    /datachannel/i.test(m) ||
+    /^server error:\s*unknown error/i.test(m) ||
+    /^server error:\s*\{\s*\}$/i.test(m)
+  );
+}
+
 export default function TestCallPage() {
   const router = useRouter();
   const { id: pid } = useParams<{ id: string }>();
@@ -72,13 +103,16 @@ export default function TestCallPage() {
   const [lines, setLines] = useState<Line[]>([]);
   const [toolsLog, setToolsLog] = useState<string[]>([]);
   const [elapsed, setElapsed] = useState(0);
-  const conversationRef = useRef<Awaited<ReturnType<typeof Conversation.startSession>> | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
+
+  const conversationRef = useRef<Awaited<ReturnType<typeof Conversation.startSession>> | null>(
+    null,
+  );
   const stopRingRef = useRef<(() => void) | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const liveSinceRef = useRef<number | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const intentionalHangupRef = useRef(false);
+  const sessionGenerationRef = useRef(0);
   const aliveRef = useRef(true);
 
   useEffect(() => {
@@ -98,14 +132,15 @@ export default function TestCallPage() {
       .then((p) => {
         setProjectName(p.name);
         setBusinessLabel(p.businessLabel || p.businessTemplate || "");
-        // Show exactly what operator saved — do not invent honorifics here
         setOperatorName(p.agent?.persona || "Operator");
       })
       .catch((e) => setError(e.message));
   }, [pid, router]);
 
   useEffect(() => {
-    if (phase !== "live" && phase !== "listening" && phase !== "speaking" && phase !== "tool") return;
+    if (phase !== "live" && phase !== "listening" && phase !== "speaking" && phase !== "tool") {
+      return;
+    }
     const t = setInterval(() => {
       if (liveSinceRef.current) {
         setElapsed(Math.floor((Date.now() - liveSinceRef.current) / 1000));
@@ -127,37 +162,38 @@ export default function TestCallPage() {
     }
   }, []);
 
-  const teardownMedia = useCallback(() => {
-    stopRingtone();
+  const endConversation = useCallback(async () => {
+    const conv = conversationRef.current;
+    conversationRef.current = null;
+    if (!conv) return;
     try {
-      void conversationRef.current?.endSession?.();
+      await conv.endSession?.();
     } catch {
       /* ignore */
     }
-    conversationRef.current = null;
-    // Legacy local mic (if any) — SDK owns mic in production path
-    localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    localStreamRef.current = null;
-    liveSinceRef.current = null;
-  }, [stopRingtone]);
+  }, []);
 
   const hangup = useCallback(async () => {
     intentionalHangupRef.current = true;
-    teardownMedia();
+    sessionGenerationRef.current += 1;
+    stopRingtone();
+    await endConversation();
+    liveSinceRef.current = null;
     setPhase((p) => (p === "idle" ? "idle" : "ended"));
-  }, [teardownMedia]);
+  }, [endConversation, stopRingtone]);
 
-  // Unmount cleanup only — never re-run during a live call
+  // Unmount: only end session if still mounted teardown — do not touch on Strict Mode
+  // remount before dial (conversationRef is null until user dials).
   useEffect(() => {
     return () => {
       aliveRef.current = false;
+      sessionGenerationRef.current += 1;
       stopRingRef.current?.();
-      try {
-        void conversationRef.current?.endSession?.();
-      } catch {
-        /* ignore */
+      const conv = conversationRef.current;
+      conversationRef.current = null;
+      if (conv) {
+        void conv.endSession?.().catch(() => undefined);
       }
-      localStreamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
@@ -166,11 +202,14 @@ export default function TestCallPage() {
     setLines((prev) => [...prev.slice(-50), line]);
   }
 
-  function buildClientTools() {
+  function buildClientTools(generation: number) {
     const tools: Record<string, (params?: Record<string, unknown>) => Promise<unknown>> = {};
     for (const name of TOOL_NAMES) {
       tools[name] = async (params = {}) => {
-        if (aliveRef.current) setPhase("tool");
+        if (!aliveRef.current || sessionGenerationRef.current !== generation) {
+          return { error: "Sessiya bitib" };
+        }
+        setPhase("tool");
         setToolsLog((prev) => [...prev.slice(-24), `→ ${name}`]);
         try {
           const result = await api.voiceTool(pid, name, params || {});
@@ -178,12 +217,15 @@ export default function TestCallPage() {
             ...prev.slice(-24),
             `✓ ${name}: ${JSON.stringify(result).slice(0, 140)}`,
           ]);
-          if (aliveRef.current) setPhase("live");
+          if (aliveRef.current && sessionGenerationRef.current === generation) {
+            setPhase("live");
+          }
           return result ?? { ok: true };
         } catch (err: any) {
           setToolsLog((prev) => [...prev.slice(-24), `✗ ${name}: ${err?.message || err}`]);
-          if (aliveRef.current) setPhase("live");
-          // Always return a plain object so the SDK never sees undefined
+          if (aliveRef.current && sessionGenerationRef.current === generation) {
+            setPhase("live");
+          }
           return { error: err?.message || "Alət xətası" };
         }
       };
@@ -191,21 +233,13 @@ export default function TestCallPage() {
     return tools;
   }
 
-  function isSoftVoiceError(message: string): boolean {
-    const m = (message || "").trim();
-    if (!m || m === "{}" || m === "[object Object]") return true;
-    return (
-      /unknown error/i.test(m) ||
-      /error_type/i.test(m) ||
-      /^server error:\s*unknown error/i.test(m) ||
-      /^server error:\s*\{\s*\}$/i.test(m)
-    );
-  }
-
   async function startCall() {
-    // Hard reset previous WebRTC so 2nd call is clean
     intentionalHangupRef.current = false;
-    teardownMedia();
+    sessionGenerationRef.current += 1;
+    const generation = sessionGenerationRef.current;
+
+    stopRingtone();
+    await endConversation();
     setError("");
     setLines([]);
     setToolsLog([]);
@@ -213,13 +247,15 @@ export default function TestCallPage() {
     setPhase("ringing");
     pushLine({ role: "system", text: "Zəng edilir…" });
 
-    // Gate: project must be ACTIVE; reload operator from DB
     try {
       const p = await api.project(pid);
+      if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+
       const name = String(p.agent?.persona || "").trim() || "Operator";
       setOperatorName(name);
       setProjectName(p.name);
       setBusinessLabel(p.businessLabel || p.businessTemplate || "");
+
       if (p.status !== "active") {
         setError(
           p.status === "draft"
@@ -240,7 +276,8 @@ export default function TestCallPage() {
       return;
     }
 
-    // Ringtone only — do NOT open getUserMedia here (conflicts with SDK WebRTC mic)
+    // Ringtone uses a separate AudioContext; close it BEFORE opening the voice session
+    // so it cannot steal / suspend the SDK audio graph.
     try {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
       if (Ctx) {
@@ -250,18 +287,19 @@ export default function TestCallPage() {
         stopRingRef.current = createRingtone(ctx);
       }
     } catch {
-      /* ringtone optional */
+      /* optional */
     }
 
-    await new Promise((r) => setTimeout(r, 800));
-    if (!aliveRef.current) return;
+    await new Promise((r) => setTimeout(r, 700));
+    if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
 
     setPhase("connecting");
     pushLine({ role: "system", text: "Qoşulur…" });
+    stopRingtone();
 
     try {
       const session = await api.voiceSession(pid);
-      if (!aliveRef.current) return;
+      if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
 
       const liveName = String(session.operatorName || "").trim();
       if (liveName) setOperatorName(liveName);
@@ -269,75 +307,75 @@ export default function TestCallPage() {
       setBusinessLabel(session.companyName || session.businessLabel || businessLabel);
       setProjectName(session.projectName || projectName);
 
-      stopRingtone();
+      const signedUrl = session.signedUrl;
+      if (!signedUrl) {
+        throw new Error("Səs bağlantısı URL alınmadı — yenidən yoxlayın");
+      }
 
-      if (!session.token) throw new Error("Səs token alınmadı — yenidən yoxlayın");
-
-      // Mic is owned by ElevenLabs SDK (single getUserMedia) — avoids post-greeting drop
+      // WebSocket transport — no LiveKit DataChannels
       conversationRef.current = await Conversation.startSession({
-        conversationToken: session.token,
-        connectionType: "webrtc",
-        clientTools: buildClientTools(),
+        signedUrl,
+        connectionType: "websocket",
+        clientTools: buildClientTools(generation),
         onConnect: () => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
           liveSinceRef.current = Date.now();
-          if (!aliveRef.current) return;
           setPhase("listening");
-          pushLine({ role: "system", text: "Zəng açıldı — salamdan sonra danışa bilərsiniz" });
+          pushLine({
+            role: "system",
+            text: "Zəng açıldı — salamdan sonra danışa bilərsiniz",
+          });
           if (session.firstMessage) {
             pushLine({ role: "assistant", text: session.firstMessage });
           }
-          // Reinforce User Prompt mid-session without ending the call
-          if (session.userPrompt) {
-            try {
-              conversationRef.current?.sendContextualUpdate?.(
-                `Bu zəng üçün əlavə təlimat: ${session.userPrompt}`,
-              );
-            } catch {
-              /* optional */
-            }
-          }
         },
-        onDisconnect: (details?: { reason?: string; context?: { type?: string; reason?: string } }) => {
-          stopRingtone();
+        onDisconnect: (details?: {
+          reason?: string;
+          context?: { type?: string; reason?: string };
+        }) => {
+          if (sessionGenerationRef.current !== generation) return;
           liveSinceRef.current = null;
           conversationRef.current = null;
           if (!aliveRef.current) return;
           setPhase("ended");
-          const ctxType = details?.context?.type || details?.reason || "";
-          const agentEnded = /end_call/i.test(String(ctxType)) || details?.reason === "agent";
-          if (agentEnded && !intentionalHangupRef.current) {
-            console.warn("Unexpected agent disconnect after greeting:", details);
-          }
+          const reason = details?.reason || details?.context?.type || "";
+          console.debug("Voice session disconnect:", details);
           pushLine({
             role: "system",
             text: intentionalHangupRef.current
               ? "Zəngi bitirdiniz"
-              : agentEnded
-                ? "Sessiya agent tərəfindən bağlandı — yenidən «Zəng et» basın"
+              : reason === "agent"
+                ? "Sessiya gözlənilmədən bağlandı — yenidən «Zəng et» basın"
                 : "Bağlantı kəsildi — yenidən «Zəng et» basın",
           });
         },
-        onError: (err: unknown, _ctx?: unknown) => {
+        onError: (err: unknown) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
           const message = typeof err === "string" ? err : errMessage(err);
-          if (!aliveRef.current) return;
-          if (isSoftVoiceError(message)) return;
-          console.warn("ElevenLabs onError:", message);
+          if (isSoftVoiceError(message)) {
+            console.debug("Soft voice error (ignored):", message);
+            return;
+          }
+          console.warn("Voice onError:", message);
           setError(message);
         },
         onModeChange: ({ mode }) => {
-          if (!aliveRef.current) return;
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
           if (mode === "speaking") setPhase("speaking");
           else if (mode === "listening") setPhase("listening");
           else setPhase("live");
         },
         onMessage: (message) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
           const role = message?.source === "user" ? "user" : "assistant";
           const text = String(message?.message || (message as any)?.text || "").trim();
           if (text) pushLine({ role, text });
         },
       });
     } catch (e: any) {
-      teardownMedia();
+      if (sessionGenerationRef.current !== generation) return;
+      stopRingtone();
+      await endConversation();
       const msg = errMessage(e);
       const inactive =
         /aktiv deyil|deaktiv|inactive|Forbidden/i.test(msg) ||
@@ -426,8 +464,8 @@ export default function TestCallPage() {
 
           {phase === "idle" || phase === "ended" || phase === "error" ? (
             <p className="call-hint">
-              Layihədə operator seçin (Leyla və ya Samir) → Yadda saxla → burada zəng edin.
-              Salamda şirkət adı + operator adı çıxır. Zəngi yalnız siz bitirin — AI zəngi kəsmir.
+              Layihə Aktiv + operator (Leyla/Samir) → Yadda saxla → Zəng et.
+              Salamdan sonra danışın — zəngi yalnız siz bitirin.
             </p>
           ) : null}
         </div>
