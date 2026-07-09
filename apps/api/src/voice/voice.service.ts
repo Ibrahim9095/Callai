@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import {
   buildCallGreeting,
   buildIdentityPrompt,
@@ -10,12 +15,15 @@ import { PrismaService } from "../prisma/prisma.service";
 import { KnowledgeService } from "../knowledge/knowledge.service";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "./agent-tools";
 import {
-  AZ_PREMIUM_STYLE,
-  VOICE_RUNTIME_RULES,
   elevenConfigured,
   ensureProjectElevenAgent,
   getElevenConversationToken,
 } from "./elevenlabs.adapter";
+import {
+  inactiveProjectMessage,
+  isProjectVoiceActive,
+} from "./call-lifecycle";
+import { composeVoicePrompt } from "./prompt-composer";
 
 @Injectable()
 export class VoiceService {
@@ -34,6 +42,13 @@ export class VoiceService {
     return project;
   }
 
+  /** Voice Engine gate — inactive projects never start ASR / WebRTC / tools. */
+  private assertVoiceActive(project: { status: string; name: string }) {
+    if (!isProjectVoiceActive(project.status)) {
+      throw new ForbiddenException(inactiveProjectMessage(project.status));
+    }
+  }
+
   private businessLabelOf(project: {
     businessTemplate: string;
     businessLabel: string | null;
@@ -43,8 +58,8 @@ export class VoiceService {
   }
 
   async createSession(organizationId: string, projectId: string) {
-    // Always re-read from DB so the latest saved operator is used.
     const project = await this.loadProject(organizationId, projectId);
+    this.assertVoiceActive(project);
 
     if (!elevenConfigured()) {
       throw new BadRequestException(
@@ -54,13 +69,11 @@ export class VoiceService {
 
     const agent = project.agent!;
     const businessLabel = this.businessLabelOf(project);
-    // Catalog only: Leyla / Samir (never invent other names)
     const operator = resolveOperator(agent.persona);
     const persona = operator.name;
     const gender = operator.gender;
     const companyName = (project.name || businessLabel || "").trim();
 
-    // Persist normalized catalog name if DB had a free-text / legacy value
     if ((agent.persona || "").trim() !== persona) {
       await this.prisma.agent.update({
         where: { projectId },
@@ -74,7 +87,6 @@ export class VoiceService {
       });
     }
 
-    // Drop stale custom greeting that doesn't match this operator + company
     let greeting = (agent.greeting || "").trim() || null;
     if (
       greeting &&
@@ -108,19 +120,15 @@ export class VoiceService {
       firstMessage,
     });
 
-    const fullPrompt = [
-      identity,
-      AZ_PREMIUM_STYLE,
-      (agent.prompt || "").trim(),
-      VOICE_RUNTIME_RULES,
-      `SƏNİN ADIN: «${persona}». ŞİRKƏT: «${companyName}». Başqa ad demə.`,
-      "ZƏNGİ HEÇ VAXT KƏSMƏ. Salamdan sonra dinlə. Yalnız müştəri bitirir.",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+    const { fullPrompt, userInstruction } = composeVoicePrompt({
+      identityBlock: identity,
+      systemPrompt: agent.prompt || "",
+      userPrompt: (agent as any).userPrompt || "",
+      persona,
+      companyName,
+    });
 
-    // After operator change, externalAgentId is cleared → recreate with new name/voice.
-    // Otherwise PATCH cached agent with fresh first_message + prompt.
+    // Always PATCH with built_in_tools.end_call:null so cached agents cannot hang up.
     const { agent_id, recreated } = await ensureProjectElevenAgent({
       projectId: project.id,
       projectName: project.name,
@@ -140,6 +148,8 @@ export class VoiceService {
       catalogVoiceId: operator.voiceId,
       voiceProvider: operator.voiceProvider,
       gender,
+      temperature: (agent as any).temperature ?? 0.45,
+      maxTokens: (agent as any).maxTokens ?? null,
     });
 
     if (agent.externalAgentId !== agent_id || recreated) {
@@ -162,6 +172,8 @@ export class VoiceService {
       operatorName: persona,
       operatorGender: gender,
       firstMessage,
+      userPrompt: userInstruction,
+      projectStatus: project.status,
       tools: [...AGENT_TOOL_NAMES],
     };
   }
@@ -172,7 +184,9 @@ export class VoiceService {
     name: string,
     rawArgs: Record<string, unknown> = {},
   ) {
-    await this.loadProject(organizationId, projectId);
+    const project = await this.loadProject(organizationId, projectId);
+    this.assertVoiceActive(project);
+
     const args =
       rawArgs.parameters && typeof rawArgs.parameters === "object"
         ? (rawArgs.parameters as Record<string, unknown>)

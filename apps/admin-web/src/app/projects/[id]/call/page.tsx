@@ -135,6 +135,7 @@ export default function TestCallPage() {
       /* ignore */
     }
     conversationRef.current = null;
+    // Legacy local mic (if any) — SDK owns mic in production path
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     liveSinceRef.current = null;
@@ -202,7 +203,7 @@ export default function TestCallPage() {
   }
 
   async function startCall() {
-    // Hard reset previous WebRTC/mic so 2nd call is clean
+    // Hard reset previous WebRTC so 2nd call is clean
     intentionalHangupRef.current = false;
     teardownMedia();
     setError("");
@@ -212,22 +213,34 @@ export default function TestCallPage() {
     setPhase("ringing");
     pushLine({ role: "system", text: "Zəng edilir…" });
 
-    // Always reload saved persona from DB before dialing
+    // Gate: project must be ACTIVE; reload operator from DB
     try {
       const p = await api.project(pid);
       const name = String(p.agent?.persona || "").trim() || "Operator";
       setOperatorName(name);
       setProjectName(p.name);
       setBusinessLabel(p.businessLabel || p.businessTemplate || "");
-      if (!String(p.agent?.persona || "").trim()) {
-        setError("Əvvəl layihədə operator adını yazıb «Yadda saxla» basın.");
+      if (p.status !== "active") {
+        setError(
+          p.status === "draft"
+            ? "Bu layihə hələ aktiv deyil. Admin paneldən «Aktiv et» basın."
+            : "Bu layihə müvəqqəti deaktiv edilib. Zəng qəbul olunmur.",
+        );
         setPhase("error");
         return;
       }
-    } catch {
-      /* keep existing */
+      if (!String(p.agent?.persona || "").trim()) {
+        setError("Əvvəl layihədə operator seçib «Yadda saxla» basın.");
+        setPhase("error");
+        return;
+      }
+    } catch (e: any) {
+      setError(e?.message || "Layihə yüklənmədi");
+      setPhase("error");
+      return;
     }
 
+    // Ringtone only — do NOT open getUserMedia here (conflicts with SDK WebRTC mic)
     try {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
       if (Ctx) {
@@ -240,30 +253,15 @@ export default function TestCallPage() {
       /* ringtone optional */
     }
 
-    await new Promise((r) => setTimeout(r, 900));
+    await new Promise((r) => setTimeout(r, 800));
     if (!aliveRef.current) return;
 
     setPhase("connecting");
     pushLine({ role: "system", text: "Qoşulur…" });
 
     try {
-      // Fresh mic each call (avoids dead tracks after hangup)
-      const mic = await navigator.mediaDevices
-        .getUserMedia({
-          audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
-            channelCount: 1,
-          },
-        })
-        .catch(() => null);
-
       const session = await api.voiceSession(pid);
-      if (!aliveRef.current) {
-        mic?.getTracks().forEach((t) => t.stop());
-        return;
-      }
+      if (!aliveRef.current) return;
 
       const liveName = String(session.operatorName || "").trim();
       if (liveName) setOperatorName(liveName);
@@ -271,11 +269,11 @@ export default function TestCallPage() {
       setBusinessLabel(session.companyName || session.businessLabel || businessLabel);
       setProjectName(session.projectName || projectName);
 
-      localStreamRef.current = mic;
       stopRingtone();
 
       if (!session.token) throw new Error("Səs token alınmadı — yenidən yoxlayın");
 
+      // Mic is owned by ElevenLabs SDK (single getUserMedia) — avoids post-greeting drop
       conversationRef.current = await Conversation.startSession({
         conversationToken: session.token,
         connectionType: "webrtc",
@@ -283,31 +281,45 @@ export default function TestCallPage() {
         onConnect: () => {
           liveSinceRef.current = Date.now();
           if (!aliveRef.current) return;
-          setPhase("live");
-          pushLine({ role: "system", text: "Zəng açıldı — danışa bilərsiniz" });
+          setPhase("listening");
+          pushLine({ role: "system", text: "Zəng açıldı — salamdan sonra danışa bilərsiniz" });
           if (session.firstMessage) {
             pushLine({ role: "assistant", text: session.firstMessage });
           }
+          // Reinforce User Prompt mid-session without ending the call
+          if (session.userPrompt) {
+            try {
+              conversationRef.current?.sendContextualUpdate?.(
+                `Bu zəng üçün əlavə təlimat: ${session.userPrompt}`,
+              );
+            } catch {
+              /* optional */
+            }
+          }
         },
-        onDisconnect: () => {
+        onDisconnect: (details?: { reason?: string; context?: { type?: string; reason?: string } }) => {
           stopRingtone();
           liveSinceRef.current = null;
-          localStreamRef.current?.getTracks().forEach((t) => t.stop());
-          localStreamRef.current = null;
           conversationRef.current = null;
           if (!aliveRef.current) return;
           setPhase("ended");
+          const ctxType = details?.context?.type || details?.reason || "";
+          const agentEnded = /end_call/i.test(String(ctxType)) || details?.reason === "agent";
+          if (agentEnded && !intentionalHangupRef.current) {
+            console.warn("Unexpected agent disconnect after greeting:", details);
+          }
           pushLine({
             role: "system",
             text: intentionalHangupRef.current
               ? "Zəngi bitirdiniz"
-              : "Bağlantı kəsildi — yenidən «Zəng et» basın",
+              : agentEnded
+                ? "Sessiya agent tərəfindən bağlandı — yenidən «Zəng et» basın"
+                : "Bağlantı kəsildi — yenidən «Zəng et» basın",
           });
         },
         onError: (err: unknown, _ctx?: unknown) => {
           const message = typeof err === "string" ? err : errMessage(err);
           if (!aliveRef.current) return;
-          // Soft provider noise — never kill call / never Next overlay
           if (isSoftVoiceError(message)) return;
           console.warn("ElevenLabs onError:", message);
           setError(message);
@@ -327,10 +339,15 @@ export default function TestCallPage() {
     } catch (e: any) {
       teardownMedia();
       const msg = errMessage(e);
+      const inactive =
+        /aktiv deyil|deaktiv|inactive|Forbidden/i.test(msg) ||
+        (e && typeof e === "object" && (e as any).status === 403);
       setError(
-        isSoftVoiceError(msg)
-          ? "Səs bağlantısı alınmadı. Səhifəni yeniləyib yenidən yoxlayın."
-          : msg || "Zəng başladılmadı",
+        inactive
+          ? msg
+          : isSoftVoiceError(msg)
+            ? "Səs bağlantısı alınmadı. Səhifəni yeniləyib yenidən yoxlayın."
+            : msg || "Zəng başladılmadı",
       );
       setPhase("error");
     }

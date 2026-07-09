@@ -1,24 +1,40 @@
-import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from "class-validator";
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  ValidateIf,
+} from "class-validator";
 import { OPERATOR_CATALOG, VOICE_PROVIDERS, type VoiceProviderId } from "@aivoiceos/shared";
 
 const OPERATOR_IDS = OPERATOR_CATALOG.map((o) => o.id);
 const OPERATOR_NAMES = OPERATOR_CATALOG.map((o) => o.name);
 
 export class UpdateAgentDto {
-  /** Catalog display name: Leyla | Samir */
   @IsOptional()
   @IsIn(OPERATOR_NAMES)
   persona?: string;
 
-  /** Catalog id: leyla | samir (preferred from admin UI) */
   @IsOptional()
   @IsIn(OPERATOR_IDS)
   operatorId?: string;
 
+  /** System Prompt — durable rules */
   @IsOptional()
   @IsString()
   @MaxLength(8000)
   prompt?: string;
+
+  /** User Prompt — injected every call */
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000)
+  userPrompt?: string;
 
   @IsOptional()
   @IsString()
@@ -38,6 +54,19 @@ export class UpdateAgentDto {
   @IsString()
   @MaxLength(500)
   greeting?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(1)
+  temperature?: number;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined)
+  @IsInt()
+  @Min(64)
+  @Max(4096)
+  maxTokens?: number | null;
 
   @IsOptional()
   @IsBoolean()

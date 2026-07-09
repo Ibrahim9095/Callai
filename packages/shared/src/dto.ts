@@ -22,9 +22,12 @@ export interface AgentDto {
   projectId: string;
   persona: string;
   prompt: string;
+  userPrompt?: string;
   language: string;
   voiceProvider: VoiceProviderId;
   voiceId: string;
+  temperature?: number;
+  maxTokens?: number | null;
   greeting: string | null;
   active: boolean;
 }
@@ -51,9 +54,12 @@ export interface UpdateAgentDto {
   persona?: string;
   operatorId?: string;
   prompt?: string;
+  userPrompt?: string;
   language?: string;
   voiceProvider?: VoiceProviderId;
   voiceId?: string;
   greeting?: string;
+  temperature?: number;
+  maxTokens?: number | null;
   active?: boolean;
 }

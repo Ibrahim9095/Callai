@@ -130,6 +130,8 @@ export const api = {
       operatorGender: "female" | "male" | "unknown";
       companyName?: string;
       firstMessage: string;
+      userPrompt?: string | null;
+      projectStatus?: string;
       tools: string[];
     }>(`/projects/${pid}/voice/session`, { method: "POST", body: "{}" }),
   voiceTool: (pid: string, name: string, args: Record<string, unknown>) =>

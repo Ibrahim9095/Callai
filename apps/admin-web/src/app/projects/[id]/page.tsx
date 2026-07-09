@@ -69,9 +69,12 @@ export default function ProjectDetailPage() {
         operatorId: op.id,
         persona: op.name,
         prompt: agent.prompt,
+        userPrompt: agent.userPrompt || "",
         language: agent.language || "az",
         voiceProvider: op.voiceProvider,
         voiceId: op.voiceId,
+        temperature: Number(agent.temperature ?? 0.45),
+        maxTokens: agent.maxTokens ? Number(agent.maxTokens) : null,
         greeting: "",
       });
       setProject(updated);
@@ -162,7 +165,7 @@ export default function ProjectDetailPage() {
             {project.status === "active" ? "Aktiv" : project.status === "paused" ? "Dayandırılıb" : "Qaralama"}
           </span>
           <button className="btn" onClick={toggleStatus}>
-            {project.status === "active" ? "Dayandır" : "Aktiv et"}
+            {project.status === "active" ? "Deaktiv et" : "Aktiv et"}
           </button>
           <button className="btn danger" onClick={removeProject} disabled={deleting}>
             {deleting ? "Silinir…" : "Sil"}
@@ -241,7 +244,7 @@ export default function ProjectDetailPage() {
           </div>
 
           <div>
-            <label>Prompt (agent təlimatı)</label>
+            <label>System Prompt (dəyişməz qaydalar)</label>
             <textarea
               value={agent.prompt || ""}
               onChange={(e) => {
@@ -249,7 +252,70 @@ export default function ProjectDetailPage() {
                 setDirty(true);
                 setAgent({ ...agent, prompt: e.target.value });
               }}
+              placeholder="Biznes qaydaları, ton, məhsul siyasəti…"
+              rows={5}
             />
+          </div>
+
+          <div>
+            <label>User Prompt (hər zəngin əvvəlində)</label>
+            <textarea
+              value={agent.userPrompt || ""}
+              onChange={(e) => {
+                setSaved(false);
+                setDirty(true);
+                setAgent({ ...agent, userPrompt: e.target.value });
+              }}
+              placeholder="Məs: Bu gün yeni kampaniyanı ilk olaraq müştəriyə təqdim et."
+              rows={3}
+            />
+            <p className="hint">Hər danışığın başlanğıcında AI-yə göndərilir.</p>
+          </div>
+
+          <div className="grid cols-2">
+            <div>
+              <label>Temperature (0–1)</label>
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                value={agent.temperature ?? 0.45}
+                onChange={(e) => {
+                  setSaved(false);
+                  setDirty(true);
+                  setAgent({ ...agent, temperature: Number(e.target.value) });
+                }}
+              />
+            </div>
+            <div>
+              <label>Max Tokens (boş = default)</label>
+              <input
+                type="number"
+                min={64}
+                max={4096}
+                step={32}
+                value={agent.maxTokens ?? ""}
+                onChange={(e) => {
+                  setSaved(false);
+                  setDirty(true);
+                  setAgent({
+                    ...agent,
+                    maxTokens: e.target.value === "" ? null : Number(e.target.value),
+                  });
+                }}
+                placeholder="məs. 512"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label>Voice Settings</label>
+            <input
+              readOnly
+              value={`${currentOp.name} · ${currentOp.gender === "female" ? "qadın" : "kişi"} səs · call-center tempo`}
+            />
+            <p className="hint">Səs operatora bağlıdır. Memory / Knowledge — Data bölməsindən.</p>
           </div>
 
           <button
@@ -327,9 +393,11 @@ export default function ProjectDetailPage() {
           <div className="row">
             <div>
               <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Test zəng (voice)</h2>
-              <p className="muted" style={{ margin: "0.3rem 0 0" }}>
-                Salam: «{project.name}» + «{currentOp.name}». Əvvəl <b>Yadda saxla</b>, sonra zəng.
-              </p>
+            <p className="muted" style={{ margin: "0.3rem 0 0" }}>
+              {project.status === "active"
+                ? `Salam: «${project.name}» + «${currentOp.name}». Əvvəl Yadda saxla, sonra zəng.`
+                : "Layihə deaktivdir — əvvəl «Aktiv et», sonra Test zəng."}
+            </p>
             </div>
             <div className="spacer" />
             <Link

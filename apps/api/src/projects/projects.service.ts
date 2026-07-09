@@ -131,23 +131,28 @@ export class ProjectsService {
       dto.persona !== undefined ||
       dto.operatorId !== undefined ||
       dto.prompt !== undefined ||
+      dto.userPrompt !== undefined ||
       dto.greeting !== undefined ||
       dto.language !== undefined ||
       dto.voiceProvider !== undefined ||
-      dto.voiceId !== undefined;
+      dto.voiceId !== undefined ||
+      dto.temperature !== undefined ||
+      dto.maxTokens !== undefined;
 
     const data: Record<string, unknown> = {};
 
     if (dto.prompt !== undefined) data.prompt = dto.prompt;
+    if (dto.userPrompt !== undefined) data.userPrompt = dto.userPrompt;
     if (dto.language !== undefined) data.language = dto.language;
     if (dto.greeting !== undefined) data.greeting = dto.greeting;
     if (dto.active !== undefined) data.active = dto.active;
+    if (dto.temperature !== undefined) data.temperature = dto.temperature;
+    if (dto.maxTokens !== undefined) data.maxTokens = dto.maxTokens;
 
     // Catalog only: Leyla | Samir
     if (dto.operatorId !== undefined || dto.persona !== undefined) {
       const raw = String(dto.operatorId || dto.persona || "").trim();
       const operator = resolveOperator(raw);
-      // Reject free-text that doesn't match catalog (resolveOperator falls back to Leyla)
       const matched =
         operator.name.toLowerCase() === raw.toLowerCase() ||
         operator.id === raw.toLowerCase();
@@ -177,8 +182,14 @@ export class ProjectsService {
 
   async setStatus(organizationId: string, projectId: string, status: ProjectStatus) {
     const project = await this.get(organizationId, projectId);
-    if (status === "active" && !project.agent?.active) {
+    if (status === "active") {
       await this.prisma.agent.update({ where: { projectId }, data: { active: true } });
+    } else {
+      // paused / draft → Voice Engine must not run
+      await this.prisma.agent.update({
+        where: { projectId },
+        data: { active: false, externalAgentId: null },
+      });
     }
     await this.prisma.project.update({ where: { id: projectId }, data: { status } });
     return this.get(organizationId, projectId);

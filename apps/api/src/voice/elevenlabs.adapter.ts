@@ -1,13 +1,40 @@
 /**
  * ElevenLabs Conversational AI adapter — per-project agent sync + session token.
- * Goals: fluent AZ, correct persona name + gender voice, never auto-hangup, low latency.
+ *
+ * Production invariants:
+ * - built_in_tools.end_call explicitly null (never agent-hangup after greeting)
+ * - silence_end_call_timeout: -1
+ * - natural call-center TTS pace
  */
 
 import { resolveElevenLabsVoiceId } from "@aivoiceos/shared";
 import { AGENT_TOOLS } from "./agent-tools";
 import { AZ_PREMIUM_STYLE, VOICE_RUNTIME_RULES } from "./prompt-style";
+import { SILENCE_REPROMPT_AZ, TTS_CALL_CENTER, TURN_CALL_CENTER } from "./call-lifecycle";
 
 const ELEVEN_API = "https://api.elevenlabs.io/v1";
+
+/** Explicitly disable every system tool that can terminate or divert a call. */
+const DISABLED_BUILT_IN_TOOLS: Record<string, null> = {
+  end_call: null,
+  language_detection: null,
+  transfer_to_agent: null,
+  transfer_to_number: null,
+  skip_turn: null,
+  play_keypad_touch_tone: null,
+  voicemail_detection: null,
+  update_state: null,
+  memory_entry_search: null,
+  memory_entry_create: null,
+  memory_entry_update: null,
+  memory_entry_delete: null,
+  agent_prompt_change: null,
+  procedure_update: null,
+  procedure_create: null,
+  procedure_delete: null,
+  transfer_to_genesys_chat: null,
+  run_subagent: null,
+};
 
 function elevenKey() {
   return process.env.ELEVENLABS_API_KEY || "";
@@ -82,10 +109,11 @@ export interface ProjectAgentSpec {
   keywords?: string[];
   cachedAgentId?: string | null;
   forceRecreate?: boolean;
-  /** Catalog voice id from admin panel */
   catalogVoiceId?: string | null;
   voiceProvider?: string | null;
   gender?: "female" | "male" | "unknown";
+  temperature?: number;
+  maxTokens?: number | null;
 }
 
 function buildAgentBody(spec: ProjectAgentSpec) {
@@ -96,6 +124,11 @@ function buildAgentBody(spec: ProjectAgentSpec) {
     voiceId: spec.catalogVoiceId,
     gender: spec.gender,
   });
+
+  const temperature =
+    typeof spec.temperature === "number" && !Number.isNaN(spec.temperature)
+      ? Math.min(1, Math.max(0, spec.temperature))
+      : 0.45;
 
   const keywords = Array.from(
     new Set(
@@ -113,30 +146,35 @@ function buildAgentBody(spec: ProjectAgentSpec) {
     ),
   ).slice(0, 30);
 
+  const promptBlock: Record<string, unknown> = {
+    prompt: spec.prompt,
+    llm,
+    temperature,
+    // CRITICAL: null = permanently disabled (PATCH merge cannot re-enable)
+    built_in_tools: { ...DISABLED_BUILT_IN_TOOLS },
+    tools: toElevenClientTools(),
+  };
+  if (spec.maxTokens != null && spec.maxTokens > 0) {
+    promptBlock.max_tokens = spec.maxTokens;
+  }
+
   return {
     name: `AI Voice OS — ${spec.projectName} — ${spec.persona}`.slice(0, 80),
     conversation_config: {
       agent: {
         first_message: spec.firstMessage,
         language: "az",
-        disable_first_message_interruptions: true,
-        prompt: {
-          prompt: spec.prompt,
-          llm,
-          temperature: 0.4,
-          // Explicitly do not send built_in_tools.end_call
-          tools: toElevenClientTools(),
-        },
+        disable_first_message_interruptions: false,
+        prompt: promptBlock,
       },
       tts: {
         voice_id: voiceId,
         model_id: ttsModel,
         expressive_mode: true,
-        // Slightly more stable = clearer AZ on 2nd+ calls
-        stability: 0.55,
-        similarity_boost: 0.75,
-        speed: 0.98,
-        optimize_streaming_latency: 3,
+        stability: TTS_CALL_CENTER.stability,
+        similarity_boost: TTS_CALL_CENTER.similarity_boost,
+        speed: TTS_CALL_CENTER.speed,
+        optimize_streaming_latency: TTS_CALL_CENTER.optimize_streaming_latency,
         agent_output_audio_format: "pcm_16000",
       },
       asr: {
@@ -146,18 +184,16 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         keywords,
       },
       turn: {
-        // Patient listening — never cut the caller; never auto-end after greeting.
-        turn_timeout: 20,
-        silence_end_call_timeout: -1,
-        turn_eagerness: "patient",
-        speculative_turn: true,
-        turn_model: "turn_v3",
+        turn_timeout: TURN_CALL_CENTER.turn_timeout,
+        silence_end_call_timeout: TURN_CALL_CENTER.silence_end_call_timeout,
+        turn_eagerness: TURN_CALL_CENTER.turn_eagerness,
+        speculative_turn: TURN_CALL_CENTER.speculative_turn,
+        turn_model: TURN_CALL_CENTER.turn_model,
         spelling_patience: "auto",
         soft_timeout_config: {
-          // ElevenLabs soft timeout must stay ≤ 8s
-          timeout_seconds: 7.5,
-          message: "Buyurun, sizi dinləyirəm.",
-          max_soft_timeouts_per_generation: 2,
+          timeout_seconds: TURN_CALL_CENTER.soft_timeout_seconds,
+          message: SILENCE_REPROMPT_AZ,
+          max_soft_timeouts_per_generation: TURN_CALL_CENTER.max_soft_timeouts_per_generation,
         },
       },
       conversation: {
@@ -178,8 +214,8 @@ export async function ensureProjectElevenAgent(
 
   const body = buildAgentBody(spec);
 
-  // When forceRecreate: create a brand-new agent so first_message / voice / name
-  // cannot stay stale from a previous call (critical after manual rename).
+  // Prefer PATCH so built_in_tools.end_call:null is applied to cached agents.
+  // Recreate only when forced or patch fails.
   if (!spec.forceRecreate && spec.cachedAgentId) {
     const agentId = spec.cachedAgentId;
     const patchRes = await fetch(`${ELEVEN_API}/convai/agents/${agentId}`, {
