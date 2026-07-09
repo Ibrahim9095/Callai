@@ -97,10 +97,8 @@ export class VoiceService {
       .filter(Boolean)
       .join("\n\n");
 
-    // Always force a full sync of first_message + prompt + voice for this persona.
-    // Recreate when cache was cleared on save; otherwise PATCH.
-    const forceRecreate = agent.externalAgentId == null;
-
+    // After "Yadda saxla", externalAgentId is cleared → recreate with new name/voice.
+    // Otherwise PATCH the cached agent with fresh first_message + prompt (no stale Leyla).
     const { agent_id, recreated } = await ensureProjectElevenAgent({
       projectId: project.id,
       projectName: project.name,
@@ -112,7 +110,7 @@ export class VoiceService {
         Boolean,
       ) as string[],
       cachedAgentId: agent.externalAgentId,
-      forceRecreate,
+      forceRecreate: agent.externalAgentId == null,
       catalogVoiceId: agent.voiceId,
       voiceProvider: agent.voiceProvider,
       gender,

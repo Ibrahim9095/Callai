@@ -132,9 +132,10 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         voice_id: voiceId,
         model_id: ttsModel,
         expressive_mode: true,
-        stability: 0.45,
-        similarity_boost: 0.8,
-        speed: 1.0,
+        // Slightly more stable = clearer AZ on 2nd+ calls
+        stability: 0.55,
+        similarity_boost: 0.75,
+        speed: 0.98,
         optimize_streaming_latency: 3,
         agent_output_audio_format: "pcm_16000",
       },
@@ -145,14 +146,16 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         keywords,
       },
       turn: {
-        turn_timeout: 15,
+        // Patient: don't cut the caller mid-sentence (2nd-call quality).
+        turn_timeout: 12,
         silence_end_call_timeout: -1,
         turn_eagerness: "patient",
         speculative_turn: true,
         turn_model: "turn_v3",
         spelling_patience: "auto",
         soft_timeout_config: {
-          timeout_seconds: 7.5,
+          // ElevenLabs soft timeout must stay ≤ 8s
+          timeout_seconds: 7,
           message: "Buyurun, sizi dinləyirəm.",
           max_soft_timeouts_per_generation: 1,
         },
@@ -174,9 +177,11 @@ export async function ensureProjectElevenAgent(
   if (!elevenKey()) throw new Error("ELEVENLABS_API_KEY təyin edilməyib");
 
   const body = buildAgentBody(spec);
-  const agentId = spec.forceRecreate ? undefined : spec.cachedAgentId || undefined;
 
-  if (agentId) {
+  // When forceRecreate: create a brand-new agent so first_message / voice / name
+  // cannot stay stale from a previous call (critical after manual rename).
+  if (!spec.forceRecreate && spec.cachedAgentId) {
+    const agentId = spec.cachedAgentId;
     const patchRes = await fetch(`${ELEVEN_API}/convai/agents/${agentId}`, {
       method: "PATCH",
       headers: headers(),

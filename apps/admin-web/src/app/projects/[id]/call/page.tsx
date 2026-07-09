@@ -127,11 +127,10 @@ export default function TestCallPage() {
     }
   }, []);
 
-  const hangup = useCallback(async () => {
-    intentionalHangupRef.current = true;
+  const teardownMedia = useCallback(() => {
     stopRingtone();
     try {
-      await conversationRef.current?.endSession?.();
+      void conversationRef.current?.endSession?.();
     } catch {
       /* ignore */
     }
@@ -139,12 +138,18 @@ export default function TestCallPage() {
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     liveSinceRef.current = null;
-    setPhase((p) => (p === "idle" ? "idle" : "ended"));
   }, [stopRingtone]);
+
+  const hangup = useCallback(async () => {
+    intentionalHangupRef.current = true;
+    teardownMedia();
+    setPhase((p) => (p === "idle" ? "idle" : "ended"));
+  }, [teardownMedia]);
 
   // Unmount cleanup only — never re-run during a live call
   useEffect(() => {
     return () => {
+      aliveRef.current = false;
       stopRingRef.current?.();
       try {
         void conversationRef.current?.endSession?.();
@@ -185,12 +190,25 @@ export default function TestCallPage() {
     return tools;
   }
 
+  function isSoftVoiceError(message: string): boolean {
+    const m = (message || "").trim();
+    if (!m || m === "{}" || m === "[object Object]") return true;
+    return (
+      /unknown error/i.test(m) ||
+      /error_type/i.test(m) ||
+      /^server error:\s*unknown error/i.test(m) ||
+      /^server error:\s*\{\s*\}$/i.test(m)
+    );
+  }
+
   async function startCall() {
+    // Hard reset previous WebRTC/mic so 2nd call is clean
+    intentionalHangupRef.current = false;
+    teardownMedia();
     setError("");
     setLines([]);
     setToolsLog([]);
     setElapsed(0);
-    intentionalHangupRef.current = false;
     setPhase("ringing");
     pushLine({ role: "system", text: "Zəng edilir…" });
 
@@ -201,6 +219,11 @@ export default function TestCallPage() {
       setOperatorName(name);
       setProjectName(p.name);
       setBusinessLabel(p.businessLabel || p.businessTemplate || "");
+      if (!String(p.agent?.persona || "").trim()) {
+        setError("Əvvəl layihədə operator adını yazıb «Yadda saxla» basın.");
+        setPhase("error");
+        return;
+      }
     } catch {
       /* keep existing */
     }
@@ -217,14 +240,15 @@ export default function TestCallPage() {
       /* ringtone optional */
     }
 
-    await new Promise((r) => setTimeout(r, 1000));
+    await new Promise((r) => setTimeout(r, 900));
     if (!aliveRef.current) return;
 
     setPhase("connecting");
     pushLine({ role: "system", text: "Qoşulur…" });
 
     try {
-      const micPromise = navigator.mediaDevices
+      // Fresh mic each call (avoids dead tracks after hangup)
+      const mic = await navigator.mediaDevices
         .getUserMedia({
           audio: {
             echoCancellation: true,
@@ -236,7 +260,10 @@ export default function TestCallPage() {
         .catch(() => null);
 
       const session = await api.voiceSession(pid);
-      if (!aliveRef.current) return;
+      if (!aliveRef.current) {
+        mic?.getTracks().forEach((t) => t.stop());
+        return;
+      }
 
       const liveName = String(session.operatorName || "").trim();
       if (liveName) setOperatorName(liveName);
@@ -244,7 +271,7 @@ export default function TestCallPage() {
       setBusinessLabel(session.businessLabel || businessLabel);
       setProjectName(session.projectName || projectName);
 
-      localStreamRef.current = await micPromise;
+      localStreamRef.current = mic;
       stopRingtone();
 
       if (!session.token) throw new Error("Səs token alınmadı — yenidən yoxlayın");
@@ -265,6 +292,9 @@ export default function TestCallPage() {
         onDisconnect: () => {
           stopRingtone();
           liveSinceRef.current = null;
+          localStreamRef.current?.getTracks().forEach((t) => t.stop());
+          localStreamRef.current = null;
+          conversationRef.current = null;
           if (!aliveRef.current) return;
           setPhase("ended");
           pushLine({
@@ -274,17 +304,12 @@ export default function TestCallPage() {
               : "Bağlantı kəsildi — yenidən «Zəng et» basın",
           });
         },
-        onError: (err: unknown) => {
-          const message = errMessage(err);
+        onError: (err: unknown, _ctx?: unknown) => {
+          const message = typeof err === "string" ? err : errMessage(err);
           if (!aliveRef.current) return;
-          console.warn("ElevenLabs onError:", err);
-          // Benign / malformed SDK events — do NOT kill the call or flash red error
-          const soft =
-            !message ||
-            /unknown error/i.test(message) ||
-            /error_type/i.test(message) ||
-            message === "Server error: Unknown error";
-          if (soft) return;
+          // Soft provider noise — never kill call / never Next overlay
+          if (isSoftVoiceError(message)) return;
+          console.warn("ElevenLabs onError:", message);
           setError(message);
         },
         onModeChange: ({ mode }) => {
@@ -300,10 +325,10 @@ export default function TestCallPage() {
         },
       });
     } catch (e: any) {
-      stopRingtone();
+      teardownMedia();
       const msg = errMessage(e);
       setError(
-        /error_type|unknown error/i.test(msg)
+        isSoftVoiceError(msg)
           ? "Səs bağlantısı alınmadı. Səhifəni yeniləyib yenidən yoxlayın."
           : msg || "Zəng başladılmadı",
       );
@@ -340,6 +365,9 @@ export default function TestCallPage() {
           </div>
 
           <div className="call-identity">
+            <p className="muted" style={{ margin: "0 0 0.25rem", fontSize: "0.8rem" }}>
+              Saxlanmış operator adı
+            </p>
             <h1 className="call-name">{operatorName}</h1>
             <p className="call-role">
               {businessLabel || "Operator"}

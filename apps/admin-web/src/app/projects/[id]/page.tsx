@@ -50,6 +50,7 @@ export default function ProjectDetailPage() {
   const [agent, setAgent] = useState<any>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -82,28 +83,39 @@ export default function ProjectDetailPage() {
     try {
       const persona = String(agent.persona || "").trim();
       if (!persona) {
-        setError("Operator adını yazın (məs: Kamran)");
+        setError("Operator adını yazın (məs: İbrahim, Kamran, Leyla)");
         setSaving(false);
         return;
       }
-      // Auto-pick gender voice if still on mismatched default
+      // Prefer typed gender voice; fall back to name-based suggestion
       const suggested = suggestVoiceForPersona(persona);
       const voiceProvider = agent.voiceProvider || suggested?.provider || "azure";
       const voiceId = agent.voiceId || suggested?.voiceId || "az-AZ-BanuNeural";
+      // Keep custom greeting only if it already contains this exact name
+      const typedGreeting = String(agent.greeting || "").trim();
+      const greeting =
+        typedGreeting && typedGreeting.toLowerCase().includes(persona.toLowerCase())
+          ? typedGreeting
+          : "";
       const updated = await api.updateAgent(id, {
         persona,
         prompt: agent.prompt,
         language: agent.language,
         voiceProvider,
         voiceId,
-        // Clear greeting so next call builds from the new name
-        greeting: "",
+        greeting,
       });
       setProject(updated);
-      setAgent(updated.agent);
+      setAgent({
+        ...updated.agent,
+        persona: updated.agent?.persona || persona,
+      });
       setSaved(true);
+      setDirty(false);
+      // Scroll save confirmation into view on mobile
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } catch (e: any) {
-      setError(e.message);
+      setError(e.message || "Saxlanılmadı");
     } finally {
       setSaving(false);
     }
@@ -190,43 +202,61 @@ export default function ProjectDetailPage() {
         </div>
 
         <section className="card grid">
-          <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>AI Agent</h2>
+          <div className="row" style={{ alignItems: "flex-start" }}>
+            <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>AI Agent</h2>
+            <div className="spacer" />
+            <button className="btn primary" onClick={save} disabled={saving} style={{ minWidth: 140 }}>
+              {saving ? "Saxlanır…" : "Yadda saxla"}
+            </button>
+          </div>
+          {saved ? (
+            <p style={{ color: "var(--ok)", margin: 0, fontWeight: 700 }}>
+              Yadda saxlanıldı ✓ — zəngdə ad: «{agent.persona}». İndi Test zəngə keçin.
+            </p>
+          ) : null}
+          {error ? <p className="error" style={{ margin: 0 }}>{error}</p> : null}
+
+          <div>
+            <label>Operator adı (əl ilə) — zəngdə məhz bu ad çıxacaq</label>
+            <input
+              value={agent.persona || ""}
+              onChange={(e) => {
+                const persona = e.target.value;
+                const suggested = suggestVoiceForPersona(persona);
+                setSaved(false);
+                setDirty(true);
+                setAgent({
+                  ...agent,
+                  persona,
+                  ...(suggested
+                    ? { voiceProvider: suggested.provider, voiceId: suggested.voiceId }
+                    : {}),
+                });
+              }}
+              placeholder="Məs: İbrahim, Kamran, Leyla"
+            />
+            <p className="hint" style={{ marginBottom: 0 }}>
+              Adı yazın → <b>Yadda saxla</b> (yuxarı / aşağı sticky) → Test zəng. Saxlamadan zəng etməyin.
+            </p>
+          </div>
 
           <div className="grid cols-2">
             <div>
-              <label>Operator adı (əl ilə)</label>
-              <input
-                value={agent.persona || ""}
-                onChange={(e) => {
-                  const persona = e.target.value;
-                  const suggested = suggestVoiceForPersona(persona);
-                  setAgent({
-                    ...agent,
-                    persona,
-                    ...(suggested
-                      ? { voiceProvider: suggested.provider, voiceId: suggested.voiceId }
-                      : {}),
-                  });
-                }}
-                placeholder="Məs: Leyla və ya Kamran"
-              />
-              <p className="hint">
-                Leyla → xanım + qadın səs; Kamran → bəy + kişi səs. Adı siz yazırsınız — «Yadda saxla»
-                basın.
-              </p>
-            </div>
-            <div>
               <label>Dil</label>
-              <select value={agent.language} onChange={(e) => setAgent({ ...agent, language: e.target.value })}>
+              <select
+                value={agent.language}
+                onChange={(e) => {
+                  setSaved(false);
+                  setDirty(true);
+                  setAgent({ ...agent, language: e.target.value });
+                }}
+              >
                 <option value="az">Azərbaycan (az)</option>
                 <option value="tr">Türk (tr)</option>
                 <option value="en">İngilis (en)</option>
                 <option value="ru">Rus (ru)</option>
               </select>
             </div>
-          </div>
-
-          <div className="grid cols-2">
             <div>
               <label>Səs (cins)</label>
               <select
@@ -240,6 +270,8 @@ export default function ProjectDetailPage() {
                 }
                 onChange={(e) => {
                   const [provider, voiceId] = e.target.value.split("::");
+                  setSaved(false);
+                  setDirty(true);
                   setAgent({ ...agent, voiceProvider: provider, voiceId });
                 }}
               >
@@ -249,31 +281,51 @@ export default function ProjectDetailPage() {
                   </option>
                 ))}
               </select>
-              <p className="hint">Kişi ad üçün Babək / ElevenLabs kişi seçin. Canlı zəng bu cinsə uyğun səslənir.</p>
-            </div>
-            <div>
-              <label>Salamlama (boş = avtomatik)</label>
-              <input
-                value={agent.greeting || ""}
-                onChange={(e) => setAgent({ ...agent, greeting: e.target.value })}
-                placeholder="Boş buraxın — ad + sahə ilə avtomatik qurular"
-              />
+              <p className="hint">Kişi ad (İbrahim/Kamran) → Babək. Qadın (Leyla) → Banu.</p>
             </div>
           </div>
 
           <div>
-            <label>Prompt (agent təlimatı)</label>
-            <textarea value={agent.prompt || ""} onChange={(e) => setAgent({ ...agent, prompt: e.target.value })} />
+            <label>Salamlama (boş = avtomatik, adınızla)</label>
+            <input
+              value={agent.greeting || ""}
+              onChange={(e) => {
+                setSaved(false);
+                setDirty(true);
+                setAgent({ ...agent, greeting: e.target.value });
+              }}
+              placeholder="Boş buraxın — avtomatik: Salam… mən İbrahim…"
+            />
           </div>
 
-          <div className="row">
-            <button className="btn primary" onClick={save} disabled={saving}>
-              {saving ? "Yadda saxlanılır…" : "Yadda saxla"}
-            </button>
-            {saved ? <span style={{ color: "var(--ok)" }}>Yadda saxlanıldı ✓</span> : null}
-            {error ? <span className="error">{error}</span> : null}
+          <div>
+            <label>Prompt (agent təlimatı)</label>
+            <textarea
+              value={agent.prompt || ""}
+              onChange={(e) => {
+                setSaved(false);
+                setDirty(true);
+                setAgent({ ...agent, prompt: e.target.value });
+              }}
+            />
           </div>
+
+          <button className="btn primary" onClick={save} disabled={saving} style={{ width: "100%", fontSize: "1.05rem", padding: "0.9rem" }}>
+            {saving ? "Yadda saxlanılır…" : "Yadda saxla"}
+          </button>
         </section>
+
+        {/* Sticky save bar — always visible on mobile while editing agent */}
+        <div className="save-bar">
+          <div className="save-bar-inner">
+            <span className="muted" style={{ fontSize: "0.85rem" }}>
+              Ad: <b style={{ color: "var(--ink)" }}>{agent.persona || "—"}</b>
+            </span>
+            <button className="btn primary" onClick={save} disabled={saving}>
+              {saving ? "…" : saved ? "Saxlanıldı ✓" : "Yadda saxla"}
+            </button>
+          </div>
+        </div>
 
         <section className="card grid">
           <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Telefon nömrəsi</h2>
@@ -331,12 +383,25 @@ export default function ProjectDetailPage() {
             <div>
               <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Test zəng (voice)</h2>
               <p className="muted" style={{ margin: "0.3rem 0 0" }}>
-                Brauzerdən canlı söhbət — agent fayllardan oxuyub rezerv/sifariş yaza bilər.
-                Əvvəl data yükləyin, sonra zəng edin.
+                Əvvəl yuxarıda adı yazıb <b>Yadda saxla</b> basın. Sonra zəng edin —
+                ekranda və salamda məhz «{agent?.persona || "…"}» çıxacaq.
               </p>
             </div>
             <div className="spacer" />
-            <Link className="btn primary" href={`/projects/${id}/call`}>Test zəng →</Link>
+            <Link
+              className="btn primary"
+              href={`/projects/${id}/call`}
+              onClick={(e) => {
+                if (dirty) {
+                  const ok = window.confirm(
+                    "Son dəyişikliyi hələ «Yadda saxla» etməmisiniz — zəngdə köhnə ad qala bilər. Yenə də keçilsin?",
+                  );
+                  if (!ok) e.preventDefault();
+                }
+              }}
+            >
+              Test zəng →
+            </Link>
           </div>
         </section>
 
