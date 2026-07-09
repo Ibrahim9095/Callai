@@ -11,7 +11,6 @@ const TOOL_NAMES = ["list_collections", "search_records", "create_record", "upda
 type Phase = "idle" | "ringing" | "connecting" | "live" | "listening" | "speaking" | "tool" | "ended" | "error";
 type Line = { role: "user" | "assistant" | "system"; text: string };
 
-/** Soft dual-tone ringtone via Web Audio (no asset file). */
 function createRingtone(ctx: AudioContext) {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -52,6 +51,15 @@ function formatDuration(sec: number) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function errMessage(err: unknown): string {
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const e = err as any;
+    return e.message || e.error || e.reason || JSON.stringify(err).slice(0, 200);
+  }
+  return "Naməlum xəta";
+}
+
 export default function TestCallPage() {
   const router = useRouter();
   const { id: pid } = useParams<{ id: string }>();
@@ -71,6 +79,14 @@ export default function TestCallPage() {
   const liveSinceRef = useRef<number | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
   const intentionalHangupRef = useRef(false);
+  const aliveRef = useRef(true);
+
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!getToken()) {
@@ -82,8 +98,8 @@ export default function TestCallPage() {
       .then((p) => {
         setProjectName(p.name);
         setBusinessLabel(p.businessLabel || p.businessTemplate || "");
-        const persona = p.agent?.persona || "Operator";
-        setOperatorName(persona);
+        // Show exactly what operator saved — do not invent honorifics here
+        setOperatorName(p.agent?.persona || "Operator");
       })
       .catch((e) => setError(e.message));
   }, [pid, router]);
@@ -111,7 +127,6 @@ export default function TestCallPage() {
     }
   }, []);
 
-  /** Only the customer (or explicit hang-up button) ends the call — never auto. */
   const hangup = useCallback(async () => {
     intentionalHangupRef.current = true;
     stopRingtone();
@@ -127,7 +142,7 @@ export default function TestCallPage() {
     setPhase((p) => (p === "idle" ? "idle" : "ended"));
   }, [stopRingtone]);
 
-  // Unmount only: do not depend on hangup (that would re-run and kill the live call).
+  // Unmount cleanup only — never re-run during a live call
   useEffect(() => {
     return () => {
       stopRingRef.current?.();
@@ -141,6 +156,7 @@ export default function TestCallPage() {
   }, []);
 
   function pushLine(line: Line) {
+    if (!aliveRef.current) return;
     setLines((prev) => [...prev.slice(-50), line]);
   }
 
@@ -148,20 +164,21 @@ export default function TestCallPage() {
     const tools: Record<string, (params?: Record<string, unknown>) => Promise<unknown>> = {};
     for (const name of TOOL_NAMES) {
       tools[name] = async (params = {}) => {
-        setPhase("tool");
+        if (aliveRef.current) setPhase("tool");
         setToolsLog((prev) => [...prev.slice(-24), `→ ${name}`]);
         try {
-          const result = await api.voiceTool(pid, name, params);
+          const result = await api.voiceTool(pid, name, params || {});
           setToolsLog((prev) => [
             ...prev.slice(-24),
             `✓ ${name}: ${JSON.stringify(result).slice(0, 140)}`,
           ]);
-          setPhase("live");
-          return result;
+          if (aliveRef.current) setPhase("live");
+          return result ?? { ok: true };
         } catch (err: any) {
-          setToolsLog((prev) => [...prev.slice(-24), `✗ ${name}: ${err.message}`]);
-          setPhase("live");
-          return { error: err.message };
+          setToolsLog((prev) => [...prev.slice(-24), `✗ ${name}: ${err?.message || err}`]);
+          if (aliveRef.current) setPhase("live");
+          // Always return a plain object so the SDK never sees undefined
+          return { error: err?.message || "Alət xətası" };
         }
       };
     }
@@ -189,8 +206,8 @@ export default function TestCallPage() {
       /* ringtone optional */
     }
 
-    // Short ring so connect feels fast
-    await new Promise((r) => setTimeout(r, 1400));
+    await new Promise((r) => setTimeout(r, 1200));
+    if (!aliveRef.current) return;
 
     setPhase("connecting");
     pushLine({ role: "system", text: "Qoşulur…" });
@@ -208,14 +225,17 @@ export default function TestCallPage() {
         .catch(() => null);
 
       const session = await api.voiceSession(pid);
+      if (!aliveRef.current) return;
+
       setOperatorName(session.operatorName || operatorName);
       setOperatorGender(session.operatorGender || "unknown");
       setBusinessLabel(session.businessLabel || businessLabel);
       setProjectName(session.projectName || projectName);
 
       localStreamRef.current = await micPromise;
-
       stopRingtone();
+
+      if (!session.token) throw new Error("Səs token alınmadı");
 
       conversationRef.current = await Conversation.startSession({
         conversationToken: session.token,
@@ -223,6 +243,7 @@ export default function TestCallPage() {
         clientTools: buildClientTools(),
         onConnect: () => {
           liveSinceRef.current = Date.now();
+          if (!aliveRef.current) return;
           setPhase("live");
           pushLine({ role: "system", text: "Zəng açıldı — danışa bilərsiniz" });
           if (session.firstMessage) {
@@ -232,7 +253,7 @@ export default function TestCallPage() {
         onDisconnect: () => {
           stopRingtone();
           liveSinceRef.current = null;
-          // If provider dropped unexpectedly, keep UI honest but do not auto-restart.
+          if (!aliveRef.current) return;
           setPhase("ended");
           pushLine({
             role: "system",
@@ -241,13 +262,17 @@ export default function TestCallPage() {
               : "Bağlantı kəsildi — yenidən «Zəng et» basın",
           });
         },
-        onError: (err) => {
-          const message = typeof err === "string" ? err : (err as Error)?.message || "Səs xətası";
+        onError: (err: unknown) => {
+          // SDK may pass string OR (message, context) — never crash on shape
+          const message = errMessage(err);
+          if (!aliveRef.current) return;
+          // Soft errors: log but do not kill the call UI unless disconnected
+          console.warn("ElevenLabs onError:", err);
           setError(message);
-          setPhase("error");
-          stopRingtone();
+          // Do not force phase=error on every soft warning — wait for disconnect
         },
         onModeChange: ({ mode }) => {
+          if (!aliveRef.current) return;
           if (mode === "speaking") setPhase("speaking");
           else if (mode === "listening") setPhase("listening");
           else setPhase("live");
@@ -260,7 +285,13 @@ export default function TestCallPage() {
       });
     } catch (e: any) {
       stopRingtone();
-      setError(e.message || "Zəng başladılmadı");
+      const msg = errMessage(e);
+      // Surface the real crash that used to be "error_type"
+      setError(
+        msg.includes("error_type")
+          ? "Səs bağlantısı xətası (SDK). Səhifəni yeniləyib yenidən zəng edin."
+          : msg || "Zəng başladılmadı",
+      );
       setPhase("error");
     }
   }
@@ -333,11 +364,10 @@ export default function TestCallPage() {
             )}
           </div>
 
-          {phase === "idle" || phase === "ended" ? (
+          {phase === "idle" || phase === "ended" || phase === "error" ? (
             <p className="call-hint">
-              Zəngi yalnız siz bitirin (qırmızı düymə). Operator özünü təqdim edəcək, sizi dinləyəcək
-              və susanda özü davam etdirəcək. Persona adını dəyişib «Yadda saxla» edin — növbəti zəngdə
-              yeni adla danışacaq.
+              Operator adını layihə səhifəsində əl ilə yazın (Leyla / Kamran) → Yadda saxla → burada zəng
+              edin. Zəngi yalnız siz bitirin.
             </p>
           ) : null}
         </div>

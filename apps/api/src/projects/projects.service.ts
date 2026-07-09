@@ -9,6 +9,7 @@ import {
   buildCustomStarterPrompt,
   CUSTOM_TEMPLATE_ID,
   DEFAULT_VOICE,
+  defaultPersonaForTemplate,
   normalizeAzPhone,
   getAzOperator,
 } from "@aivoiceos/shared";
@@ -55,14 +56,15 @@ export class ProjectsService {
       }
       businessTemplate = CUSTOM_TEMPLATE_ID;
       businessLabel = customType;
-      persona = `${customType} operatoru`;
+      // Personal name is manual — default Leyla; operator changes it in the panel.
+      persona = defaultPersonaForTemplate(CUSTOM_TEMPLATE_ID, "female");
       prompt = buildCustomStarterPrompt(customType);
     } else {
       const template = getBusinessTemplate(dto.businessTemplate);
       if (!template) throw new BadRequestException("Naməlum biznes şablonu");
       businessTemplate = template.id;
       businessLabel = template.label;
-      persona = template.label;
+      persona = defaultPersonaForTemplate(template.id, "female");
       prompt = template.starterPrompt;
     }
 

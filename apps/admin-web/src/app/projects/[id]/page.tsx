@@ -12,10 +12,26 @@ function formatPhone(e164: string): string {
 }
 
 const VOICES = [
-  { provider: "azure", voiceId: "az-AZ-BanuNeural", label: "Banu — Azərbaycan (qadın) · Azure" },
-  { provider: "azure", voiceId: "az-AZ-BabekNeural", label: "Babək — Azərbaycan (kişi) · Azure" },
-  { provider: "elevenlabs", voiceId: "eleven_v3_conversational", label: "ElevenLabs v3 (premium)" },
+  { provider: "azure", voiceId: "az-AZ-BanuNeural", label: "Banu — qadın (Azərbaycan)" },
+  { provider: "azure", voiceId: "az-AZ-BabekNeural", label: "Babək — kişi (Azərbaycan)" },
+  { provider: "elevenlabs", voiceId: "elevenlabs-female", label: "ElevenLabs — qadın (premium)" },
+  { provider: "elevenlabs", voiceId: "elevenlabs-male", label: "ElevenLabs — kişi (premium)" },
 ];
+
+/** Suggest matching voice when operator types a gendered name (manual override still allowed). */
+function suggestVoiceForPersona(persona: string): { provider: string; voiceId: string } | null {
+  const p = (persona || "").trim().toLowerCase();
+  const female = ["leyla", "nigar", "aysel", "gunel", "günel", "banu", "sevil", "narmin", "nərmin"];
+  const male = ["kamran", "tahir", "elnur", "elvin", "orxan", "tural", "murad", "babək", "babek", "anar"];
+  const first = p.split(/\s+/)[0]?.replace(/[^a-zəğıöüçşüiı]/gi, "") || "";
+  if (female.includes(first) || /\bxanım\b/.test(p)) {
+    return { provider: "azure", voiceId: "az-AZ-BanuNeural" };
+  }
+  if (male.includes(first) || /\bbəy\b|\bbey\b/.test(p)) {
+    return { provider: "azure", voiceId: "az-AZ-BabekNeural" };
+  }
+  return null;
+}
 
 export default function ProjectDetailPage() {
   const router = useRouter();
@@ -159,8 +175,26 @@ export default function ProjectDetailPage() {
 
           <div className="grid cols-2">
             <div>
-              <label>Persona</label>
-              <input value={agent.persona || ""} onChange={(e) => setAgent({ ...agent, persona: e.target.value })} />
+              <label>Operator adı (əl ilə)</label>
+              <input
+                value={agent.persona || ""}
+                onChange={(e) => {
+                  const persona = e.target.value;
+                  const suggested = suggestVoiceForPersona(persona);
+                  setAgent({
+                    ...agent,
+                    persona,
+                    ...(suggested
+                      ? { voiceProvider: suggested.provider, voiceId: suggested.voiceId }
+                      : {}),
+                  });
+                }}
+                placeholder="Məs: Leyla və ya Kamran"
+              />
+              <p className="hint">
+                Leyla → xanım + qadın səs; Kamran → bəy + kişi səs. Adı siz yazırsınız — «Yadda saxla»
+                basın.
+              </p>
             </div>
             <div>
               <label>Dil</label>
@@ -175,9 +209,16 @@ export default function ProjectDetailPage() {
 
           <div className="grid cols-2">
             <div>
-              <label>Səs</label>
+              <label>Səs (cins)</label>
               <select
-                value={voiceKey(agent)}
+                value={
+                  VOICES.some((v) => `${v.provider}::${v.voiceId}` === voiceKey(agent))
+                    ? voiceKey(agent)
+                    : agent.voiceId?.toLowerCase().includes("male") ||
+                        agent.voiceId?.includes("Babek")
+                      ? "azure::az-AZ-BabekNeural"
+                      : "azure::az-AZ-BanuNeural"
+                }
                 onChange={(e) => {
                   const [provider, voiceId] = e.target.value.split("::");
                   setAgent({ ...agent, voiceProvider: provider, voiceId });
@@ -189,14 +230,14 @@ export default function ProjectDetailPage() {
                   </option>
                 ))}
               </select>
-              <p className="hint">Default: Azure Banu (doğma Azərbaycan, ucuz). Premium: ElevenLabs.</p>
+              <p className="hint">Kişi ad üçün Babək / ElevenLabs kişi seçin. Canlı zəng bu cinsə uyğun səslənir.</p>
             </div>
             <div>
-              <label>Salamlama (ilk cümlə)</label>
+              <label>Salamlama (boş = avtomatik)</label>
               <input
                 value={agent.greeting || ""}
                 onChange={(e) => setAgent({ ...agent, greeting: e.target.value })}
-                placeholder="Salam, ... Buyurun, necə kömək edə bilərəm?"
+                placeholder="Boş buraxın — ad + sahə ilə avtomatik qurular"
               />
             </div>
           </div>

@@ -18,10 +18,6 @@ import {
   getElevenConversationToken,
 } from "./elevenlabs.adapter";
 
-/**
- * Voice runtime: issue browser test-call sessions and execute knowledge tools
- * scoped to the caller's organization + project.
- */
 @Injectable()
 export class VoiceService {
   constructor(
@@ -47,18 +43,18 @@ export class VoiceService {
     return getBusinessTemplate(project.businessTemplate)?.label || project.businessTemplate;
   }
 
-  /** Start a browser WebRTC test call — always syncs latest persona/prompt to ElevenLabs. */
   async createSession(organizationId: string, projectId: string) {
     const project = await this.loadProject(organizationId, projectId);
 
     if (!elevenConfigured()) {
       throw new BadRequestException(
-        "Səs API açarı yoxdur. Serverə ELEVENLABS_API_KEY əlavə edin (Azure adapter tezliklə).",
+        "Səs API açarı yoxdur. Serverə ELEVENLABS_API_KEY əlavə edin.",
       );
     }
 
     const agent = project.agent!;
     const businessLabel = this.businessLabelOf(project);
+    // Gender from manual persona name first, then selected voice
     const gender = inferOperatorGender(agent.persona, agent.voiceId);
     const operatorName = formatOperatorDisplayName(agent.persona || "Operator", gender);
     const firstMessage = buildCallGreeting({
@@ -84,12 +80,13 @@ export class VoiceService {
       AZ_PREMIUM_STYLE,
       (agent.prompt || "").trim(),
       VOICE_RUNTIME_RULES,
+      "ZƏNGİ HEÇ VAXT KƏSMƏ. end_call yoxdur. Yalnız müştəri zəngi bitirir.",
     ]
       .filter(Boolean)
       .join("\n\n");
 
     const name = extractPersonaName(agent.persona);
-    const forceRecreate = Boolean(agent.externalAgentId === null);
+    const forceRecreate = agent.externalAgentId == null;
 
     const { agent_id, recreated } = await ensureProjectElevenAgent({
       projectId: project.id,
@@ -101,6 +98,9 @@ export class VoiceService {
       keywords: [name, operatorName, project.name, businessLabel].filter(Boolean) as string[],
       cachedAgentId: agent.externalAgentId,
       forceRecreate,
+      catalogVoiceId: agent.voiceId,
+      voiceProvider: agent.voiceProvider,
+      gender,
     });
 
     if (agent.externalAgentId !== agent_id || recreated) {

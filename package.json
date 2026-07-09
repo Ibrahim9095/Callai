@@ -15,9 +15,11 @@
     "db:push": "npm --workspace @aivoiceos/api run db:push",
     "db:migrate": "npm --workspace @aivoiceos/api run db:migrate",
     "db:seed": "npm --workspace @aivoiceos/api run db:seed",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "postinstall": "patch-package"
   },
   "devDependencies": {
+    "patch-package": "^8.0.1",
     "turbo": "^2.3.3",
     "typescript": "^5.7.3"
   },

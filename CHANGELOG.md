@@ -7,34 +7,20 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 ## [Unreleased]
 
 ### Fixed
-- **Operator name not updating on call** (Leyla → Tahir): saving agent now
-  clears the cached ElevenLabs agent so the next call syncs the new persona,
-  greeting, and identity prompt. Greeting always uses the current name.
-- **Call dropping by itself**: removed React effect that re-hung-up on re-render;
-  disabled provider `end_call`; `silence_end_call_timeout: -1`;
-  `max_duration_seconds: 3600`. Only the customer hang-up button ends the call.
-  After the agent finishes a sentence it waits; if the customer stays silent it
-  re-prompts («Buyurun, sizi dinləyirəm»).
+- **Runtime `error_type` crash** (ElevenLabs SDK): patched
+  `handleErrorEvent` when `error_event` is missing — this was killing calls
+  mid-conversation. Persisted via `patch-package`.
+- **Call session 500** from invalid `soft_timeout` (>8s) — clamped to 7.5s.
+- **Persona / gender**: operator name is manual (default «Leyla», not job title).
+  Leyla → xanım + female voice; Kamran → bəy + male voice. Saving clears remote
+  agent cache so the next call uses the new name. Voice dropdown includes
+  male/female options; typing a known name suggests matching voice.
+- **Auto hang-up / React kill**: safer call page error handling; tools always
+  return objects; soft SDK errors no longer force-end the UI.
 
 ### Improved
-- Premium Azerbaijani style (no Turkish), careful listening, faster TTS/streaming,
-  identity block at top of live prompt, ASR keywords for operator name.
-
-### Added
-- **Call screen polish**: ringtone while connecting, large hang-up button,
-  operator display name with xanım/bəy, business role on screen, call timer,
-  chat bubbles. Greeting auto-builds as
-  «Salam, mən {Ad xanım/bəy}. {Sahə} operatoruyam. Buyurun, necə kömək edə bilərəm?»
-- Lower WebRTC latency (ElevenLabs streaming latency 4, eager turn-taking) and
-  stronger listen/search/write rules for live calls.
-- **PDF / TXT / DOCX upload** alongside Excel/CSV — mobile file picker accepts
-  these types; clearer error when a format is unsupported. PDF/Word become a
-  text collection; spreadsheets stay multi-sheet → collections.
-- **Voice milestone (browser test call)**: per-project WebRTC call via
-  ElevenLabs; agent tools `list_collections`, `search_records`, `create_record`,
-  `update_record` read/write the project's uploaded data live (hotel rooms,
-  restaurant table reservations, etc. — same generic logic). Admin page:
-  `/projects/:id/call`. `Agent.externalAgentId` caches the remote agent.
+- Premium Azerbaijani style, listen carefully, soft re-prompt on silence,
+  no built-in `end_call`, max call 1 hour.
 - Custom (free-text) business type when creating a project ("Digər") — any
   business (e.g. "Təkər təmiri") can be onboarded; agent gets a generated AZ
   starter prompt that is fully editable. Adds `Project.businessLabel`.

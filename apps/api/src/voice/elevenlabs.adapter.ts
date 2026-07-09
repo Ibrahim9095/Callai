@@ -1,8 +1,9 @@
 /**
  * ElevenLabs Conversational AI adapter — per-project agent sync + session token.
- * Goals: fluent AZ, correct persona name, never auto-hangup, minimal latency.
+ * Goals: fluent AZ, correct persona name + gender voice, never auto-hangup, low latency.
  */
 
+import { resolveElevenLabsVoiceId } from "@aivoiceos/shared";
 import { AGENT_TOOLS } from "./agent-tools";
 import { AZ_PREMIUM_STYLE, VOICE_RUNTIME_RULES } from "./prompt-style";
 
@@ -75,22 +76,26 @@ export interface ProjectAgentSpec {
   projectId: string;
   projectName: string;
   persona: string;
-  /** Full system prompt already including identity + style */
   prompt: string;
   firstMessage: string;
   language: string;
-  /** ASR boost keywords (operator name, business terms) */
   keywords?: string[];
   cachedAgentId?: string | null;
-  /** Force recreate if PATCH fails or persona must fully refresh */
   forceRecreate?: boolean;
+  /** Catalog voice id from admin panel */
+  catalogVoiceId?: string | null;
+  voiceProvider?: string | null;
+  gender?: "female" | "male" | "unknown";
 }
 
 function buildAgentBody(spec: ProjectAgentSpec) {
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "FDs1ZX5J4e4f2c2erxtW";
-  // Prefer a stronger model for fluent AZ when configured; flash stays default for cost/speed.
   const llm = process.env.ELEVENLABS_LLM || "gemini-2.5-flash";
   const ttsModel = process.env.ELEVENLABS_TTS_MODEL || "eleven_v3_conversational";
+  const voiceId = resolveElevenLabsVoiceId({
+    voiceProvider: spec.voiceProvider,
+    voiceId: spec.catalogVoiceId,
+    gender: spec.gender,
+  });
 
   const keywords = Array.from(
     new Set(
@@ -100,7 +105,6 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         "manat",
         "sifariş",
         "rezerv",
-        "otaq",
         "buyurun",
         "əlbəttə",
         "xahiş",
@@ -119,9 +123,8 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         prompt: {
           prompt: spec.prompt,
           llm,
-          temperature: 0.45,
-          // Explicitly omit built-in end_call so the agent cannot hang up.
-          built_in_tools: {},
+          temperature: 0.4,
+          // Do NOT include built-in end_call — customer hangs up only.
           tools: toElevenClientTools(),
         },
       },
@@ -129,17 +132,11 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         voice_id: voiceId,
         model_id: ttsModel,
         expressive_mode: true,
-        stability: 0.38,
-        similarity_boost: 0.78,
-        speed: 1.05,
-        optimize_streaming_latency: 4,
+        stability: 0.42,
+        similarity_boost: 0.8,
+        speed: 1.0,
+        optimize_streaming_latency: 3,
         agent_output_audio_format: "pcm_16000",
-        suggested_audio_tags: [
-          { tag: "warmly", description: "Mehriban salam və təqdimat" },
-          { tag: "friendly", description: "Səmimi söhbət" },
-          { tag: "thinking", description: "Dataya baxarkən" },
-          { tag: "confident", description: "Aydın cavab və təsdiq" },
-        ],
       },
       asr: {
         quality: "high",
@@ -148,22 +145,21 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         keywords,
       },
       turn: {
-        // Wait for full user sentence, then respond quickly
-        turn_timeout: 12,
+        turn_timeout: 15,
         silence_end_call_timeout: -1,
-        turn_eagerness: "normal",
+        turn_eagerness: "patient",
         speculative_turn: true,
         turn_model: "turn_v3",
         spelling_patience: "auto",
+        // Soft re-prompt when customer is quiet (does NOT end the call)
         soft_timeout_config: {
-          timeout_seconds: 8,
+          timeout_seconds: 7.5,
           message: "Buyurun, sizi dinləyirəm.",
-          max_soft_timeouts_per_generation: 2,
+          max_soft_timeouts_per_generation: 1,
         },
       },
       conversation: {
         text_only: false,
-        // Long calls OK — customer ends; do not auto-cut early
         max_duration_seconds: 3600,
       },
     },
@@ -192,7 +188,7 @@ export async function ensureProjectElevenAgent(
       return { agent_id: agentId, recreated: false };
     }
     const errText = await patchRes.text().catch(() => "");
-    console.warn("ElevenLabs agent patch failed, recreating:", errText.slice(0, 200));
+    console.warn("ElevenLabs agent patch failed, recreating:", errText.slice(0, 300));
   }
 
   const createRes = await fetch(`${ELEVEN_API}/convai/agents/create`, {
