@@ -16,6 +16,7 @@ import { ProjectsService } from "./projects.service";
 import { CreateProjectDto } from "./dto/create-project.dto";
 import { UpdateAgentDto } from "./dto/update-agent.dto";
 import { SetStatusDto } from "./dto/set-status.dto";
+import { AssignPhoneDto } from "./dto/assign-phone.dto";
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Controller("projects")
@@ -56,6 +57,22 @@ export class ProjectsController {
     @Body() dto: SetStatusDto,
   ) {
     return this.projects.setStatus(user.organizationId, id, dto.status);
+  }
+
+  @MinRole("editor")
+  @Patch(":id/phone")
+  assignPhone(
+    @CurrentUser() user: RequestUser,
+    @Param("id") id: string,
+    @Body() dto: AssignPhoneDto,
+  ) {
+    return this.projects.assignPhone(user.organizationId, id, dto.number);
+  }
+
+  @MinRole("editor")
+  @Delete(":id/phone")
+  removePhone(@CurrentUser() user: RequestUser, @Param("id") id: string) {
+    return this.projects.removePhone(user.organizationId, id);
   }
 
   @MinRole("org_admin")

@@ -65,6 +65,9 @@ export const api = {
       body: JSON.stringify({ name, businessTemplate, ...(customType ? { customType } : {}) }),
     }),
   deleteProject: (id: string) => request<{ ok: boolean }>(`/projects/${id}`, { method: "DELETE" }),
+  assignPhone: (id: string, number: string) =>
+    request<any>(`/projects/${id}/phone`, { method: "PATCH", body: JSON.stringify({ number }) }),
+  removePhone: (id: string) => request<any>(`/projects/${id}/phone`, { method: "DELETE" }),
   updateAgent: (id: string, data: Record<string, unknown>) =>
     request<any>(`/projects/${id}/agent`, { method: "PATCH", body: JSON.stringify(data) }),
   setStatus: (id: string, status: string) =>

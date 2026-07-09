@@ -9,6 +9,8 @@ import {
   buildCustomStarterPrompt,
   CUSTOM_TEMPLATE_ID,
   DEFAULT_VOICE,
+  normalizeAzPhone,
+  getAzOperator,
 } from "@aivoiceos/shared";
 import { CreateProjectDto } from "./dto/create-project.dto";
 import { UpdateAgentDto } from "./dto/update-agent.dto";
@@ -27,14 +29,14 @@ export class ProjectsService {
     return this.prisma.project.findMany({
       where: { organizationId },
       orderBy: { createdAt: "desc" },
-      include: { agent: true },
+      include: { agent: true, phoneNumber: true },
     });
   }
 
   async get(organizationId: string, id: string) {
     const project = await this.prisma.project.findFirst({
       where: { id, organizationId },
-      include: { agent: true },
+      include: { agent: true, phoneNumber: true },
     });
     if (!project) throw new NotFoundException("Project tapılmadı");
     return project;
@@ -83,8 +85,36 @@ export class ProjectsService {
           },
         },
       },
-      include: { agent: true },
+      include: { agent: true, phoneNumber: true },
     });
+  }
+
+  /**
+   * Assign an Azerbaijani phone number to a project. Validates/normalizes to
+   * E.164 and stores it. Live PSTN routing is provisioned later via a SIP
+   * TelephonyProvider (ADR-0004); status stays "pending" until then.
+   */
+  async assignPhone(organizationId: string, projectId: string, rawNumber: string) {
+    await this.get(organizationId, projectId);
+    const e164 = normalizeAzPhone(rawNumber);
+    if (!e164) {
+      throw new BadRequestException(
+        "Yalnız Azərbaycan nömrəsi (+994) qəbul olunur. Məs: 050 123 45 67",
+      );
+    }
+    const operator = getAzOperator(e164);
+    await this.prisma.phoneNumber.upsert({
+      where: { projectId },
+      update: { e164, operator, provider: "manual", status: "pending" },
+      create: { projectId, e164, operator, provider: "manual", status: "pending" },
+    });
+    return this.get(organizationId, projectId);
+  }
+
+  async removePhone(organizationId: string, projectId: string) {
+    await this.get(organizationId, projectId);
+    await this.prisma.phoneNumber.deleteMany({ where: { projectId } });
+    return this.get(organizationId, projectId);
   }
 
   async remove(organizationId: string, id: string) {

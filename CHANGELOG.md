@@ -11,6 +11,10 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
   business (e.g. "Təkər təmiri") can be onboarded; agent gets a generated AZ
   starter prompt that is fully editable. Adds `Project.businessLabel`.
 - Delete project from the project detail page (removes it from the list).
+- **Phone number per project** (Azerbaijan): assign/remove an AZ number, with
+  E.164 normalization and operator detection (Azercell/Bakcell/Nar/landline).
+  Adds `PhoneNumber` model + `@aivoiceos/shared` phone helpers. Status is
+  `pending` until live SIP routing is provisioned (ADR-0004).
 
 ### Notes
 - Provider decisions ADR-0003 (voice: Azure default + ElevenLabs premium) and

@@ -13,6 +13,7 @@ type Project = {
   businessLabel?: string | null;
   status: "draft" | "active" | "paused";
   agent?: { active: boolean; voiceProvider: string; voiceId: string } | null;
+  phoneNumber?: { e164: string; operator?: string | null; status: string } | null;
 };
 
 const CUSTOM = "custom";
@@ -150,7 +151,10 @@ export default function ProjectsPage() {
                 <Link key={p.id} href={`/projects/${p.id}`} className="card item">
                   <div>
                     <h3>{p.name}</h3>
-                    <small>{label(p)} · səs: {p.agent?.voiceId || "—"}</small>
+                    <small>
+                      {label(p)}
+                      {p.phoneNumber?.e164 ? ` · ☎ ${p.phoneNumber.e164}` : " · nömrə yoxdur"}
+                    </small>
                   </div>
                   <span className={`pill ${p.status}`}>{statusLabel(p.status)}</span>
                 </Link>

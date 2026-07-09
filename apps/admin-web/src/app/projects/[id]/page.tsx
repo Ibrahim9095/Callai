@@ -5,6 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, getToken } from "@/lib/api";
 
+function formatPhone(e164: string): string {
+  const d = String(e164 || "").replace(/[^\d]/g, "").replace(/^994/, "");
+  if (d.length !== 9) return e164;
+  return `+994 ${d.slice(0, 2)} ${d.slice(2, 5)} ${d.slice(5, 7)} ${d.slice(7, 9)}`;
+}
+
 const VOICES = [
   { provider: "azure", voiceId: "az-AZ-BanuNeural", label: "Banu — Azərbaycan (qadın) · Azure" },
   { provider: "azure", voiceId: "az-AZ-BabekNeural", label: "Babək — Azərbaycan (kişi) · Azure" },
@@ -23,6 +29,8 @@ export default function ProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [phoneInput, setPhoneInput] = useState("");
+  const [phoneBusy, setPhoneBusy] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -74,6 +82,34 @@ export default function ProjectDetailPage() {
       setAgent(updated.agent);
     } catch (e: any) {
       setError(e.message);
+    }
+  }
+
+  async function assignPhone() {
+    if (!phoneInput.trim()) return;
+    setPhoneBusy(true);
+    setError("");
+    try {
+      const updated = await api.assignPhone(id, phoneInput.trim());
+      setProject(updated);
+      setPhoneInput("");
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setPhoneBusy(false);
+    }
+  }
+
+  async function removePhone() {
+    setPhoneBusy(true);
+    setError("");
+    try {
+      const updated = await api.removePhone(id);
+      setProject(updated);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setPhoneBusy(false);
     }
   }
 
@@ -179,11 +215,49 @@ export default function ProjectDetailPage() {
           </div>
         </section>
 
+        <section className="card grid">
+          <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Telefon nömrəsi</h2>
+          {project.phoneNumber ? (
+            <div className="row">
+              <div>
+                <div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{formatPhone(project.phoneNumber.e164)}</div>
+                <small className="muted">
+                  {project.phoneNumber.operator || "Operator naməlum"} ·{" "}
+                  {project.phoneNumber.status === "active" ? "Aktiv (routing)" : "Təyin olunub (routing gözləyir)"}
+                </small>
+              </div>
+              <div className="spacer" />
+              <button className="btn danger" onClick={removePhone} disabled={phoneBusy}>
+                Nömrəni sil
+              </button>
+            </div>
+          ) : (
+            <div>
+              <label>Azərbaycan nömrəsi təyin et</label>
+              <div className="row">
+                <input
+                  style={{ flex: 1, minWidth: 200 }}
+                  value={phoneInput}
+                  onChange={(e) => setPhoneInput(e.target.value)}
+                  placeholder="050 123 45 67  və ya  +994 50 123 45 67"
+                />
+                <button className="btn primary" onClick={assignPhone} disabled={phoneBusy}>
+                  {phoneBusy ? "…" : "Təyin et"}
+                </button>
+              </div>
+              <p className="hint">
+                Azercell / Bakcell / Nar / şəhər nömrəsi. Nömrə platformada saxlanılır; canlı zəng
+                yönləndirməsi Azərbaycan SIP provayderi qoşulduqdan sonra aktivləşəcək.
+              </p>
+            </div>
+          )}
+        </section>
+
         <section className="card">
           <h2 className="title" style={{ fontSize: "1.05rem", marginTop: 0 }}>Növbəti mərhələlər</h2>
           <p className="muted" style={{ margin: 0 }}>
-            Bilik bazası (Excel/PDF), telefon nömrəsi (Azərbaycan SIP), CRM və analitika bu layihəyə
-            sonrakı versiyalarda əlavə olunacaq (bax: docs/ROADMAP.md).
+            Bilik bazası (Excel/PDF), CRM və analitika bu layihəyə sonrakı versiyalarda əlavə
+            olunacaq (bax: docs/ROADMAP.md).
           </p>
         </section>
       </div>
