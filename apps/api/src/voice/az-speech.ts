@@ -124,4 +124,10 @@ export const AZ_ASR_KEYWORDS = [
   "mövcud",
   "giriş",
   "çıxış",
+  "saatlıq",
+  "gecəlik",
+  "günlük",
+  "nömrə",
+  "soyad",
+  "telefon",
 ] as const;

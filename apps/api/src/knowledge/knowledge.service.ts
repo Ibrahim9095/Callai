@@ -169,10 +169,127 @@ export class KnowledgeService {
     return { collection, records };
   }
 
+  /** Add telefon / gelis_saati columns when missing (Excel uploads often omit them). */
+  private async ensureContactFields(collectionId: string, fields: FieldDef[]): Promise<FieldDef[]> {
+    const keys = new Set(fields.map((f) => this.normalize(f.key)));
+    const labels = new Set(fields.map((f) => this.normalize(f.label || "")));
+    const next = [...fields];
+    const add = (key: string, label: string, type: FieldDef["type"] = "text") => {
+      if (keys.has(this.normalize(key)) || labels.has(this.normalize(label))) return;
+      next.push({ key, label, type });
+      keys.add(this.normalize(key));
+      labels.add(this.normalize(label));
+    };
+    add("telefon", "Telefon", "text");
+    add("gelis_saati", "Gəliş saati", "text");
+    add("qeyd", "Qeyd", "text");
+    if (next.length === fields.length) return fields;
+    await this.prisma.collection.update({
+      where: { id: collectionId },
+      data: { fields: next as object },
+    });
+    return next;
+  }
+
+  /**
+   * Map agent/LLM payload keys onto collection field keys.
+   * Agents often send «ad», «telefon», «otaq tipi» while the sheet uses
+   * «qonaq», «telefon», «otaq_novu» — without aliases those values were dropped.
+   */
+  private mapAgentData(fields: FieldDef[], data: Record<string, unknown>): Record<string, unknown> {
+    const out: Record<string, unknown> = { ...(data || {}) };
+    const byNorm = new Map<string, FieldDef>();
+    for (const f of fields) {
+      byNorm.set(this.normalize(f.key), f);
+      if (f.label) byNorm.set(this.normalize(f.label), f);
+    }
+
+    const ALIAS_GROUPS: string[][] = [
+      ["qonaq", "guest", "ad", "ad soyad", "ad_soyad", "musteri", "müştəri", "customer", "name", "full_name"],
+      ["telefon", "phone", "tel", "nomre", "nömrə", "elaqe", "əlaqə", "mobile", "cellphone"],
+      ["otaq_novu", "otaq novu", "otaq tipi", "room_type", "roomtype", "room type", "type"],
+      ["otaq", "otaq no", "otaq №", "room", "room_no", "room number", "nomre otaq"],
+      ["giris", "giriş", "check_in", "checkin", "check in", "gelis", "gəliş", "arrival"],
+      ["cixis", "çıxış", "check_out", "checkout", "check out", "gedis", "gediş", "departure"],
+      ["gece", "gecə", "nights", "night", "geceler"],
+      ["gecelik_qiymet_azn", "gecelik qiymet", "gecəlik qiymət", "price", "qiymet", "qiymət", "nightly"],
+      ["cemi_azn", "cemi", "cəmi", "total", "mebleg", "məbləğ"],
+      ["gelis_saati", "gəliş saati", "arrival_time", "arrival time", "saat", "time", "gelis saat"],
+      ["rezerv_id", "rezerv id", "reservation_id", "id"],
+      ["status", "veziyyet", "vəziyyət"],
+      ["qeyd", "note", "notes", "comment", "serh", "şərh"],
+    ];
+
+    for (const [rawKey, rawVal] of Object.entries(data || {})) {
+      if (rawVal === undefined || rawVal === null || rawVal === "") continue;
+      const nk = this.normalize(rawKey);
+      // Exact key/label already present
+      const direct = byNorm.get(nk);
+      if (direct) {
+        out[direct.key] = rawVal;
+        continue;
+      }
+      for (const group of ALIAS_GROUPS) {
+        if (!group.some((a) => this.normalize(a) === nk)) continue;
+        const target = group.map((a) => byNorm.get(this.normalize(a))).find(Boolean);
+        if (target && !(target.key in out && out[target.key] != null && out[target.key] !== "")) {
+          out[target.key] = rawVal;
+        }
+        break;
+      }
+    }
+
+    // Merge ad + soyad → guest/qonaq (always prefer full name when both given)
+    const guestField =
+      byNorm.get("qonaq") || byNorm.get("guest") || byNorm.get("musteri") || byNorm.get("customer");
+    if (guestField) {
+      const ad = data.ad ?? data.name ?? data.first_name ?? data.Ad;
+      const soyad = data.soyad ?? data.surname ?? data.last_name ?? data.Soyad;
+      if (ad || soyad) {
+        const full = [ad, soyad].filter(Boolean).join(" ").trim();
+        const current = out[guestField.key] != null ? String(out[guestField.key]).trim() : "";
+        // Prefer full name; upgrade if current is only first name
+        if (!current || (soyad && current === String(ad || "").trim())) {
+          out[guestField.key] = full;
+        }
+      }
+    }
+
+    // Pack unknown extras into qeyd when available (skip ad/soyad — already merged)
+    const noteField = byNorm.get("qeyd") || byNorm.get("note");
+    const skipExtra = new Set(
+      ["ad", "soyad", "name", "first_name", "last_name", "surname", "Ad", "Soyad"].map((s) =>
+        this.normalize(s),
+      ),
+    );
+    if (noteField) {
+      const known = new Set(fields.map((f) => f.key));
+      const extras: string[] = [];
+      for (const [k, v] of Object.entries(data || {})) {
+        if (v == null || v === "") continue;
+        if (skipExtra.has(this.normalize(k))) continue;
+        const mapped = byNorm.get(this.normalize(k));
+        if (mapped || known.has(k)) continue;
+        const isAlias = ALIAS_GROUPS.some((g) =>
+          g.some((a) => this.normalize(a) === this.normalize(k)),
+        );
+        if (isAlias) continue;
+        extras.push(`${k}: ${v}`);
+      }
+      if (extras.length) {
+        const prev = out[noteField.key] ? String(out[noteField.key]) + " | " : "";
+        out[noteField.key] = prev + extras.join("; ");
+      }
+    }
+
+    return out;
+  }
+
   private coerce(fields: FieldDef[], data: Record<string, unknown>) {
+    const mapped = this.mapAgentData(fields, data || {});
     const out: Record<string, unknown> = {};
     for (const field of fields) {
-      if (field.key in data) out[field.key] = coerceFieldValue(field.type, data[field.key]);
+      if (field.key in mapped) out[field.key] = coerceFieldValue(field.type, mapped[field.key]);
     }
     return out;
   }
@@ -477,8 +594,11 @@ export class KnowledgeService {
       };
     }
 
-    const fields = (Array.isArray(collection.fields) ? collection.fields : []) as unknown as FieldDef[];
+    // Ensure phone + arrival-time columns exist so agent data is not dropped
+    let fields = (Array.isArray(collection.fields) ? collection.fields : []) as unknown as FieldDef[];
+    fields = await this.ensureContactFields(collection.id, fields);
     const clean = this.coerce(fields, opts.data || {});
+
     // Soft-fill status if the collection has it and caller omitted it
     const statusField =
       fields.find((f) => f.key === "status") ||
@@ -486,6 +606,36 @@ export class KnowledgeService {
     if (statusField && clean[statusField.key] == null) {
       clean[statusField.key] = "təsdiqləndi";
     }
+
+    // Auto rezerv_id when missing (R006, R007, …)
+    const idField = fields.find((f) => this.normalize(f.key) === "rezerv_id");
+    if (idField && (clean[idField.key] == null || clean[idField.key] === "")) {
+      const existing = await this.prisma.collectionRecord.findMany({
+        where: { collectionId: collection.id },
+        select: { data: true },
+      });
+      let maxN = 0;
+      for (const row of existing) {
+        const raw = String((row.data as Record<string, unknown>)?.[idField.key] ?? "");
+        const m = raw.match(/(\d+)/);
+        if (m) maxN = Math.max(maxN, Number(m[1]));
+      }
+      clean[idField.key] = `R${String(maxN + 1).padStart(3, "0")}`;
+    }
+
+    // Require at least a guest/name-like value so empty rows are not saved
+    const guestField =
+      fields.find((f) => ["qonaq", "guest", "musteri", "customer", "name"].includes(this.normalize(f.key))) ||
+      fields.find((f) => /qonaq|guest|musteri|customer|ad/.test(this.normalize(f.label || "")));
+    if (guestField && (clean[guestField.key] == null || String(clean[guestField.key]).trim() === "")) {
+      return {
+        ok: false,
+        message:
+          "Rezerv yazılmadı: qonaq adı yoxdur. Müştəridən ad-soyad alın və create_record-u yenidən çağırın.",
+        missing: [guestField.key],
+      };
+    }
+
     const record = await this.prisma.collectionRecord.create({
       data: { collectionId: collection.id, projectId, data: clean as object },
     });

@@ -56,7 +56,7 @@ export const AGENT_TOOLS = [
     type: "function" as const,
     name: "create_record",
     description:
-      "Yeni rezerv / sifariş / növbə əlavə et. Əvvəl search_records ilə uyğunluğu yoxla. Müştəridən ad-soyad və telefon (lazımdırsa tarix/qeyd) al, təsdiqdən sonra çağır. data-da ən azı: ad/müştəri, telefon, seçilən məhsul/xidmət, qiymət, tarix, status.",
+      "Yeni rezerv / sifariş yaz — MƏCBURİ. Əvvəl müştəridən BİR CÜMLƏDƏ: «Zəhmət olmasa adınızı, soyadınızı və nömrənizi qeyd edin.» Saatlıq otaqsa gəliş saatını; gecəlik/günlükdürsə «Nə vaxt gələcəksiniz?» soruş. Sonra create_record. data: qonaq/ad, telefon, gelis_saati, giris, cixis, otaq_novu, status. Yazmadan «rezerv olundu» demə.",
     parameters: {
       type: "object",
       properties: {
@@ -67,7 +67,7 @@ export const AGENT_TOOLS = [
         data: {
           type: "object",
           description:
-            "Sətir sahələri: ad/müştəri, telefon, məhsul/otaq/xidmət, qiymət, tarix, status, qeyd",
+            "Sətir: qonaq (və ya ad+soyad), telefon, gelis_saati (saatlıq), giris/cixis (gecəlik), otaq_novu, status, qeyd",
           additionalProperties: true,
         },
       },

@@ -53,16 +53,18 @@ const STATUS_LABELS: Record<Phase, string> = {
 };
 
 /**
- * Barge-in gate while the operator is speaking.
- * Short noise / breath / keyboard must NOT flip the agent into listening.
- * Only sustained, intentional speech opens the mic toward ElevenLabs.
+ * Barge-in: mic stays OPEN while the operator speaks so ElevenLabs can
+ * hear the caller and stop TTS. Local gate only tracks speech for UI.
  */
 const BARGE_IN_GATE = {
-  speechLevelThreshold: 0.22,
-  speechHoldMs: 550,
-  silenceReleaseMs: 280,
-  vadScoreThreshold: 0.72,
+  speechLevelThreshold: 0.12,
+  speechHoldMs: 180,
+  silenceReleaseMs: 220,
+  vadScoreThreshold: 0.45,
 } as const;
+
+/** Louder playback — real phone-operator presence */
+const PLAYBACK_VOLUME = 1.35;
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -175,39 +177,33 @@ export default function TestCallPage() {
       });
       return;
     }
+    // Always keep mic open (unless user muted) so barge-in works
     try {
-      conversationRef.current?.setMicMuted?.(!transmit);
+      conversationRef.current?.setMicMuted?.(false);
     } catch {
       /* ignore */
     }
     localStreamRef.current?.getAudioTracks().forEach((t) => {
-      t.enabled = transmit;
+      t.enabled = true;
     });
+    void transmit;
   }, []);
 
   const setAgentSpeaking = useCallback(
     (speaking: boolean) => {
       agentSpeakingRef.current = speaking;
-      if (!speaking) {
-        // Operator finished — open mic for normal turn-taking
-        bargeOpenRef.current = false;
-        speechAboveSinceRef.current = null;
-        speechBelowSinceRef.current = null;
-        applyMicTransmit(true);
-        return;
-      }
-      // Operator speaking — mute mic until sustained intentional speech
       bargeOpenRef.current = false;
       speechAboveSinceRef.current = null;
       speechBelowSinceRef.current = null;
-      applyMicTransmit(false);
+      // Mic stays open so caller can interrupt and operator stops
+      applyMicTransmit(true);
     },
     [applyMicTransmit],
   );
 
   const evaluateBargeInGate = useCallback(() => {
     if (!agentSpeakingRef.current || mutedRef.current) return;
-
+    // Mic already open — track sustained speech only for UI / diagnostics
     const now = performance.now();
     const level = levelRef.current;
     const vad = lastVadScoreRef.current;
@@ -221,7 +217,6 @@ export default function TestCallPage() {
       const held = now - speechAboveSinceRef.current;
       if (!bargeOpenRef.current && held >= BARGE_IN_GATE.speechHoldMs) {
         bargeOpenRef.current = true;
-        applyMicTransmit(true);
       }
     } else {
       speechAboveSinceRef.current = null;
@@ -230,11 +225,10 @@ export default function TestCallPage() {
         if (now - speechBelowSinceRef.current >= BARGE_IN_GATE.silenceReleaseMs) {
           bargeOpenRef.current = false;
           speechBelowSinceRef.current = null;
-          applyMicTransmit(false);
         }
       }
     }
-  }, [applyMicTransmit]);
+  }, []);
 
   const stopMeter = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -461,6 +455,13 @@ export default function TestCallPage() {
           if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
           inCallRef.current = true;
           setPhase("live");
+          try {
+            conversationRef.current?.setVolume?.({ volume: PLAYBACK_VOLUME });
+            conversationRef.current?.setMicMuted?.(false);
+          } catch {
+            /* ignore */
+          }
+          applyMicTransmit(true);
           pushLine({
             role: "system",
             text: "Zəng açıldı — salamdan sonra danışa bilərsiniz",
@@ -554,12 +555,7 @@ export default function TestCallPage() {
       applyMicTransmit(false);
       return;
     }
-    // Unmute: open mic unless agent is speaking and barge gate is closed
-    if (agentSpeakingRef.current && !bargeOpenRef.current) {
-      applyMicTransmit(false);
-    } else {
-      applyMicTransmit(true);
-    }
+    applyMicTransmit(true);
   }
 
   const live = connected && phase !== "error" && phase !== "idle";

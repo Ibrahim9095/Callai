@@ -26,36 +26,40 @@ export const SILENCE_REPROMPT_AZ = "Narahat olmayın, sizi dinləyirəm.";
 export const SOFT_TIMEOUT_FILLERS_AZ = ["Bir saniyə…"] as const;
 
 /**
- * Call-center TTS: clear Bakı phonemes + fast first audio.
+ * Call-center TTS: loud, clear Bakı phonemes + fast first audio.
  */
 export const TTS_CALL_CENTER = {
-  /** Natural phone pace — slightly brisk so replies feel alive */
-  speed: 1.05,
-  stability: 0.4,
-  similarity_boost: 0.8,
-  /** 3 = faster first byte (human-like snappy replies) */
-  optimize_streaming_latency: 3,
+  /** Slightly brisk phone pace — clear, not rushed */
+  speed: 1.02,
+  /** Lower stability = more natural Bakı intonation (less flat/robotic) */
+  stability: 0.32,
+  /** High similarity keeps the chosen voice identity */
+  similarity_boost: 0.88,
+  /** 4 = snappier first byte for quick operator replies */
+  optimize_streaming_latency: 4,
+  /** Client playback gain (1 = default; >1 louder on call UI) */
+  playbackVolume: 1.35,
 } as const;
 
 /**
  * Human-like turn-taking:
- * - normal eagerness = don't jump mid-sentence, but don't wait forever
+ * - eager = answer quickly after caller finishes
  * - soft timeout fillers = no dead air while thinking
  * - never auto-hangup on silence
  */
 export const TURN_CALL_CENTER = {
   /** Re-engage if user goes quiet (seconds) */
-  turn_timeout: 12,
+  turn_timeout: 10,
   silence_end_call_timeout: -1,
-  /** Balanced: waits for natural end of user phrase, then answers quickly */
-  turn_eagerness: "normal" as const,
+  /** Eager: faster replies after natural end of user phrase */
+  turn_eagerness: "eager" as const,
   speculative_turn: true,
   turn_model: "turn_v3",
   /**
    * One soft filler if LLM is slow — avoid stacking.
-   * 3.5s: fast replies skip filler; slow ones get a single human beat.
+   * 2.8s: most replies skip filler; slow ones get a single human beat.
    */
-  soft_timeout_seconds: 3.5,
+  soft_timeout_seconds: 2.8,
   max_soft_timeouts_per_generation: 1,
 } as const;
 
@@ -90,16 +94,17 @@ export const INTERRUPTION_IGNORE_TERMS_AZ = [
 
 /**
  * Client barge-in gate (while operator is speaking).
- * Only sustained, intentional speech unmutes the mic toward ElevenLabs.
- * Short noise / breath / keyboard clicks stay below threshold and are ignored.
+ * Mic stays OPEN so ElevenLabs can hear the caller and stop TTS on interrupt.
+ * Gate only filters obvious noise from triggering false barge-in locally.
+ * Real speech must reach the agent quickly so the operator stops talking.
  */
 export const BARGE_IN_GATE = {
-  /** Analyser level 0–1; higher = less sensitive to noise */
-  speechLevelThreshold: 0.22,
-  /** Must stay above threshold this long before barge-in opens */
-  speechHoldMs: 550,
-  /** Drop below threshold this long → close barge-in again (while agent still speaking) */
-  silenceReleaseMs: 280,
-  /** Optional ElevenLabs onVadScore floor when available */
-  vadScoreThreshold: 0.72,
+  /** Analyser level 0–1 — lower = more responsive to real speech */
+  speechLevelThreshold: 0.12,
+  /** Open barge-in after this much sustained speech (ms) */
+  speechHoldMs: 180,
+  /** Drop below threshold this long → treat as pause (ms) */
+  silenceReleaseMs: 220,
+  /** ElevenLabs onVadScore floor when available */
+  vadScoreThreshold: 0.45,
 } as const;
