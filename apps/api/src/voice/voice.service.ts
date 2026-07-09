@@ -56,22 +56,25 @@ export class VoiceService {
     return getBusinessTemplate(project.businessTemplate)?.label || project.businessTemplate;
   }
 
-  private buildPromptBundle(project: {
-    id: string;
-    name: string;
-    businessTemplate: string;
-    businessLabel: string | null;
-    agent: {
-      persona: string;
-      prompt: string;
-      userPrompt?: string | null;
-      greeting?: string | null;
-      voiceId: string;
-      speechSpeed?: number | null;
-      temperature?: number | null;
-      maxTokens?: number | null;
-    } | null;
-  }) {
+  private async buildPromptBundle(
+    organizationId: string,
+    project: {
+      id: string;
+      name: string;
+      businessTemplate: string;
+      businessLabel: string | null;
+      agent: {
+        persona: string;
+        prompt: string;
+        userPrompt?: string | null;
+        greeting?: string | null;
+        voiceId: string;
+        speechSpeed?: number | null;
+        temperature?: number | null;
+        maxTokens?: number | null;
+      } | null;
+    },
+  ) {
     const agent = project.agent;
     if (!agent) throw new BadRequestException("Agent konfiqurasiyası yoxdur");
     const businessLabel = this.businessLabelOf(project);
@@ -117,6 +120,34 @@ export class VoiceService {
       firstMessage,
     });
 
+    // Inject live sheet catalog so the agent knows every uploaded file/sheet
+    let knowledgeCatalog: string | null = null;
+    try {
+      const listed = await this.knowledge.agentListCollections(organizationId, project.id);
+      if (listed?.collections?.length) {
+        knowledgeCatalog = listed.collections
+          .map(
+            (c: {
+              label: string;
+              name: string;
+              file?: string | null;
+              recordCount: number;
+              fields: Array<{ key: string; label: string }>;
+            }) => {
+              const fields = (c.fields || [])
+                .slice(0, 12)
+                .map((f) => f.label || f.key)
+                .join(", ");
+              const file = c.file ? ` · fayl: ${c.file}` : "";
+              return `- «${c.label}» (${c.name})${file} · ${c.recordCount} sətir · sahələr: ${fields || "—"}`;
+            },
+          )
+          .join("\n");
+      }
+    } catch {
+      knowledgeCatalog = null;
+    }
+
     const { fullPrompt, userInstruction } = composeVoicePrompt({
       identityBlock: identity,
       systemPrompt: agent.prompt || "",
@@ -124,6 +155,7 @@ export class VoiceService {
       firstMessage,
       persona,
       companyName,
+      knowledgeCatalog,
     });
 
     return {
@@ -138,7 +170,6 @@ export class VoiceService {
       userInstruction,
       speechSpeed,
       ttsRate,
-      // Natural dialogue: slightly warmer + enough tokens to finish sentences
       temperature: agent.temperature ?? 0.55,
       maxTokens: agent.maxTokens ?? 220,
     };
@@ -157,7 +188,7 @@ export class VoiceService {
     }
 
     const agent = project.agent!;
-    const bundle = this.buildPromptBundle(project);
+    const bundle = await this.buildPromptBundle(organizationId, project);
     const engineId = defaultVoiceProviderId();
 
     // Reuse cached ElevenLabs agent id when still on same engine+voice+persona
@@ -263,7 +294,7 @@ export class VoiceService {
   ) {
     const project = await this.loadProject(organizationId, projectId);
     this.assertVoiceActive(project);
-    const bundle = this.buildPromptBundle(project);
+    const bundle = await this.buildPromptBundle(organizationId, project);
     const provider = resolveVoiceProvider();
     const text = String(body?.text || bundle.firstMessage).trim();
     if (!text) throw new BadRequestException("Boş mətn");
@@ -288,7 +319,7 @@ export class VoiceService {
     const userText = String(body?.userText || "").trim();
     if (!userText) throw new BadRequestException("userText tələb olunur");
 
-    const bundle = this.buildPromptBundle(project);
+    const bundle = await this.buildPromptBundle(organizationId, project);
     const provider = resolveVoiceProvider();
     if (!provider.turn) {
       throw new BadRequestException("Bu voice provider turn dəstəkləmir");

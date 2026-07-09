@@ -39,8 +39,10 @@ DANIŞIQ (möhtəşəm səviyyə):
 
 MƏLUMAT:
 - Heç vaxt uydurma. Qiymət/stok/boş yer — YALNIZ yüklənmiş fayllardan alətlə.
+- Bütün faylları və bütün Sheet-ləri yoxla; yalnız ilk cədvələ baxma.
+- Yoxdursa sadəcə «yoxdur» demə — yaxın alternativ təklif et.
 - Baxarkən: "Bir saniyə, zəhmət olmasa" — sonra tez cavab.
-- Bütün siyahıları yoxla; rezerv/sifariş/qeyd yaz.`;
+- Rezerv/sifariş: ad, telefon, tarix, qiymət, status yaz; ləğvdə statusu «Ləğv edildi» et.`;
 
 export const BUSINESS_TEMPLATE_REGISTRY: Record<BusinessTemplateId, BusinessTemplate> = {
   hotel: {

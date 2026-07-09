@@ -18,31 +18,35 @@ export const AGENT_TOOLS = [
     type: "function" as const,
     name: "list_collections",
     description:
-      "Layihədəki bütün siyahıları (vərəqləri) göstərir: Otaqlar, Rezervlər, Menyu və s. Lazım olanda çağır — əlində nə qədər siyahı varsa bil.",
+      "Layihəyə yüklənmiş BÜTÜN fayl/vərəq siyahılarını göstərir (Excel Sheet-lər, CSV, PDF və s.): Otaqlar, Qiymətlər, Rezervlər, Məhsullar… Faktiki sualdan əvvəl çağır ki, hansı cədvəllər olduğunu biləsən. Heç vaxt yalnız ilk siyahını nəzərə alma.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     type: "function" as const,
     name: "search_records",
     description:
-      "Siyahılarda axtarış. Boş otaq, qiymət, masa, menyu, stok — hər şey buradan. Uydurma demə; yalnız nəticəni de. Bütün siyahılarda axtara bilərsən.",
+      "Məlumat bazasında axtarış. Qiymət, stok, otaq, rezerv, məhsul, xidmət — YALNIZ buradan. collection boş burax → BÜTÜN siyahılarda/fayllarda axtarır. Uydurma demə; nəticə yoxdursa digər sözlə və ya digər siyahıda yenə axtar, sonra alternativ təklif et.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description: "Axtarış sözü, məs: standart otaq, boş, 2 nəfər, pizza",
+          description: "Axtarış sözü, məs: standart otaq, boş, 2 nəfər, pizza, 200 manat",
         },
         collection: {
           type: "string",
-          description: "Siyahı adı və ya etiketi. Boş olsa hamısında axtarır.",
+          description:
+            "Siyahı adı/etiketi (Otaqlar, Rezervlər…). Boş = bütün fayllar və Sheet-lər.",
         },
         filters: {
           type: "object",
-          description: "Sahəyə görə filtr",
+          description: "Sahəyə görə filtr (məs: available=true, status=təsdiqləndi)",
           additionalProperties: true,
         },
-        limit: { type: "number", description: "Maksimum nəticə (default 12)" },
+        limit: {
+          type: "number",
+          description: "Maksimum nəticə (default 25, max 80)",
+        },
       },
       additionalProperties: false,
     },
@@ -51,17 +55,18 @@ export const AGENT_TOOLS = [
     type: "function" as const,
     name: "create_record",
     description:
-      "Yeni rezerv / sifariş / növbə / qeyd əlavə et. Müştəri təsdiqindən sonra çağır.",
+      "Yeni rezerv / sifariş / növbə əlavə et. Əvvəl search_records ilə uyğunluğu yoxla. Müştəridən ad-soyad və telefon (lazımdırsa tarix/qeyd) al, təsdiqdən sonra çağır. data-da ən azı: ad/müştəri, telefon, seçilən məhsul/xidmət, qiymət, tarix, status.",
     parameters: {
       type: "object",
       properties: {
         collection: {
           type: "string",
-          description: "Hansı siyahıya yazılsın (məs: Rezervlər)",
+          description: "Hansı siyahıya yazılsın (məs: Rezervlər, Sifarişlər)",
         },
         data: {
           type: "object",
-          description: "Sətir sahələri",
+          description:
+            "Sətir sahələri: ad/müştəri, telefon, məhsul/otaq/xidmət, qiymət, tarix, status, qeyd",
           additionalProperties: true,
         },
       },
@@ -72,7 +77,8 @@ export const AGENT_TOOLS = [
   {
     type: "function" as const,
     name: "update_record",
-    description: "Mövcud sətri yenilə. Əvvəl search_records ilə recordId götür.",
+    description:
+      "Mövcud sətri yenilə (rezerv dəyişikliyi və ya ləğv). Əvvəl search_records ilə recordId tap. Ləğv üçün status sahəsini «Ləğv edildi» et.",
     parameters: {
       type: "object",
       properties: {
@@ -80,7 +86,7 @@ export const AGENT_TOOLS = [
         collection: { type: "string", description: "Siyahı adı (opsional)" },
         data: {
           type: "object",
-          description: "Dəyişəcək sahələr",
+          description: "Dəyişəcək sahələr (status, tarix, telefon və s.)",
           additionalProperties: true,
         },
       },

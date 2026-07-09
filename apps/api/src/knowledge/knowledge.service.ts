@@ -333,16 +333,23 @@ export class KnowledgeService {
 
     const q = this.normalize(opts.query || "");
     const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
-    const limit = Math.min(Math.max(Number(opts.limit) || 12, 1), 40);
-    const results: Array<{
+    // Higher default so agent can scan more sheets before answering
+    const limit = Math.min(Math.max(Number(opts.limit) || 25, 1), 80);
+    type Hit = {
       collection: string;
       collectionLabel: string;
       recordId: string;
       data: Record<string, unknown>;
-    }> = [];
+      score: number;
+    };
+    const scored: Hit[] = [];
+    let scannedCollections = 0;
+    let scannedRecords = 0;
 
     for (const c of collections) {
+      scannedCollections += 1;
       for (const rec of c.records) {
+        scannedRecords += 1;
         const data = (rec.data || {}) as Record<string, unknown>;
         if (opts.filters && typeof opts.filters === "object") {
           let ok = true;
@@ -350,7 +357,6 @@ export class KnowledgeService {
             if (v === undefined || v === null || v === "") continue;
             const cell = data[k];
             if (this.normalize(String(cell ?? "")) !== this.normalize(String(v))) {
-              // also allow partial match for text
               if (!this.normalize(String(cell ?? "")).includes(this.normalize(String(v)))) {
                 ok = false;
                 break;
@@ -359,28 +365,43 @@ export class KnowledgeService {
           }
           if (!ok) continue;
         }
+
+        let score = 0;
         if (tokens.length) {
           const hay = this.normalize(JSON.stringify(data));
-          if (!tokens.every((t) => hay.includes(t))) continue;
+          const matched = tokens.filter((t) => hay.includes(t));
+          // Prefer full AND match; keep partial OR hits as alternatives
+          if (matched.length === 0) continue;
+          score = matched.length / tokens.length;
+          if (matched.length === tokens.length) score += 1;
+        } else {
+          score = 1;
         }
-        results.push({
+
+        scored.push({
           collection: c.name,
           collectionLabel: c.label,
           recordId: rec.id,
           data,
+          score,
         });
-        if (results.length >= limit) break;
       }
-      if (results.length >= limit) break;
     }
+
+    scored.sort((a, b) => b.score - a.score);
+    const results = scored.slice(0, limit).map(({ score: _s, ...rest }) => rest);
+    const searchedLabels = collections.map((c) => c.label).join(", ") || "yoxdur";
 
     return {
       found: results.length > 0,
       count: results.length,
+      searchedCollections: scannedCollections,
+      scannedRecords,
+      collectionsSearched: searchedLabels,
       message:
         results.length > 0
-          ? `${results.length} nəticə tapıldı`
-          : "Uyğun sətir tapılmadı — digər sözlə axtarın və ya başqa siyahıya baxın",
+          ? `${results.length} nəticə tapıldı (${scannedCollections} siyahı / ${scannedRecords} sətir yoxlanıldı)`
+          : `Uyğun sətir tapılmadı — yoxlanılan siyahılar: ${searchedLabels}. Digər sözlə axtarın və ya alternativ təklif edin.`,
       results,
     };
   }
@@ -415,11 +436,14 @@ export class KnowledgeService {
       };
     }
 
-    const fields = collection.fields as unknown as FieldDef[];
+    const fields = (Array.isArray(collection.fields) ? collection.fields : []) as FieldDef[];
     const clean = this.coerce(fields, opts.data || {});
     // Soft-fill status if the collection has it and caller omitted it
-    if (fields.some((f) => f.key === "status") && !clean.status) {
-      clean.status = "təsdiqləndi";
+    const statusField =
+      fields.find((f) => f.key === "status") ||
+      fields.find((f) => this.normalize(f.label || "").includes("status"));
+    if (statusField && clean[statusField.key] == null) {
+      clean[statusField.key] = "təsdiqləndi";
     }
     const record = await this.prisma.collectionRecord.create({
       data: { collectionId: collection.id, projectId, data: clean as object },

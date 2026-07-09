@@ -6,7 +6,7 @@
  * The spoken greeting is always `firstMessage` (Salamlama field / auto greeting).
  */
 
-import { AZ_PREMIUM_STYLE, VOICE_RUNTIME_RULES } from "./prompt-style";
+import { AZ_PREMIUM_STYLE, KB_WORK_RULES, VOICE_RUNTIME_RULES } from "./prompt-style";
 
 export interface PromptComposeInput {
   identityBlock: string;
@@ -18,6 +18,8 @@ export interface PromptComposeInput {
   firstMessage?: string | null;
   persona: string;
   companyName: string;
+  /** Live catalog of uploaded collections/sheets for this project */
+  knowledgeCatalog?: string | null;
 }
 
 export interface ComposedPrompt {
@@ -63,9 +65,16 @@ ${user}
 - Qısa cavab: 1–2 cümlə.`
     : "User Prompt-u heç vaxt səslə oxuma. Salamlama yalnız platformanın firstMessage-idir.";
 
+  const catalog = (input.knowledgeCatalog || "").trim();
+  const catalogBlock = catalog
+    ? `BU LAYİHƏNİN MƏLUMAT BAZASI (yüklənmiş fayllar / Sheet-lər):\n${catalog}\n\nFaktiki sualda əvvəl search_records ilə yoxla. Yalnız bir cədvələ baxma — lazımdırsa hamısını.`
+    : `BU LAYİHƏNİN MƏLUMAT BAZASI: hələ siyahı yüklənməyib və ya boşdur. Faktiki qiymət/stok deməzdən əvvəl list_collections və search_records çağır.`;
+
   const fullPrompt = [
     input.identityBlock,
     AZ_PREMIUM_STYLE,
+    KB_WORK_RULES,
+    catalogBlock,
     system ? `SİSTEM TƏLIMATI (System Prompt):\n${system}` : null,
     userBlock,
     greetingLock,
@@ -75,6 +84,7 @@ ${user}
     "İnsan kimi danış: müştəri bitirən kimi 1–2 qısa cümlə ilə cavab ver; cümləni yarımçıq qoyma.",
     "Danışığı təbii Bakı call-center tempində apar — uzun monoloq və süni pauza YOX.",
     "Tələffüz: əsl Bakı — türkcə söz və aksent QADAĞANDIR. AI/bot olduğunu demə.",
+    "Məlumat: uydurma YOX. Bütün faylları/vərəqləri yoxla; yoxdursa alternativ təklif et.",
   ]
     .filter(Boolean)
     .join("\n\n");
