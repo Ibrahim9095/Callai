@@ -25,14 +25,14 @@ export const AGENT_TOOLS = [
     type: "function" as const,
     name: "search_records",
     description:
-      "Məlumat bazasında axtarış — MƏCBURİ hər faktiki sualdan əvvəl. Qiymət, stok, otaq, rezerv, məhsul, xidmət — YALNIZ buradan. collection boş burax → BÜTÜN siyahılarda/fayllarda axtarır. ASR səhvi: «niymet»=qiymət, «kol»=qol — yenə axtar. Alətsiz «məlumatım yoxdur» demə. Nəticə yoxdursa digər sözlə yenə axtar, sonra alternativ təklif et.",
+      "Məlumat bazasında axtarış — MƏCBURİ. «Otel haqqında / ətraflı məlumat» üçün query: «otel» və ya «qiymət» (və ya boş) — cədvəl adı Rezervlər olsa belə içini oxuyur. collection boş = bütün fayllar. ASR: niymet=qiymət. results/summary gələndə «tapılmadı» demə; otaq və qiymətləri de.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "Axtarış sözü, məs: qiymət, standart otaq, boş, rezerv. ASR səhvi olsa da «niymet»/«kol» yazıla bilər — sistem qiymət/qol kimi genişləndirir.",
+            "Axtarış: otel, qiymət, otaq, standart, rezerv. Ümumi məlumat üçün «otel» və ya boş burax.",
         },
         collection: {
           type: "string",

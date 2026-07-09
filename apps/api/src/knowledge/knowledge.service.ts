@@ -5,7 +5,9 @@ import { parseCsv } from "./csv";
 import { parseUploadedFile, slugKey, supportedExtensions } from "./parse-file";
 import { CreateCollectionDto } from "./dto/knowledge.dto";
 import {
+  contentSearchTokens,
   expandSearchTokens,
+  isOverviewIntent,
   isPriceIntent,
   isRoomIntent,
   looksLikePriceField,
@@ -431,7 +433,7 @@ export class KnowledgeService {
     await this.assertProject(organizationId, projectId);
     const all = await this.prisma.collection.findMany({
       where: { projectId },
-      include: { records: true },
+      include: { records: true, file: { select: { filename: true } } },
     });
 
     const want = opts.collection ? this.normalize(opts.collection) : "";
@@ -458,8 +460,10 @@ export class KnowledgeService {
     const rawTokens = q ? q.split(/\s+/).filter(Boolean) : [];
     // Expand ASR mishears: niymet→qiymet, kol→qol, …
     const tokens = expandSearchTokens(rawTokens);
+    const contentTokens = contentSearchTokens(tokens);
     const priceIntent = isPriceIntent(tokens);
     const roomIntent = isRoomIntent(tokens);
+    const overviewIntent = isOverviewIntent(tokens) || contentTokens.length === 0;
     // Higher default so agent can scan more sheets before answering
     const limit = Math.min(Math.max(Number(opts.limit) || 25, 1), 80);
     type Hit = {
@@ -486,9 +490,16 @@ export class KnowledgeService {
       const hasRoomCol = fieldMeta.some(
         (f) => /otaq|room|nov|tip|type/.test(f.normKey) || /otaq|room|nov|tip/.test(f.normLabel),
       );
-      // Include field labels/keys in haystack so "qiymət" matches column gecelik_qiymet_azn
+      // Include field labels/keys + file name so "otel rezervləri" opens the sheet
+      const fileName = (c as { file?: { filename?: string | null } | null }).file?.filename || "";
       const schemaHay = this.normalize(
-        fieldMeta.map((f) => `${f.key} ${f.label}`).join(" ") + " " + c.name + " " + c.label,
+        fieldMeta.map((f) => `${f.key} ${f.label}`).join(" ") +
+          " " +
+          c.name +
+          " " +
+          c.label +
+          " " +
+          fileName,
       );
 
       for (const rec of c.records) {
@@ -513,11 +524,16 @@ export class KnowledgeService {
         const valueHay = this.normalize(JSON.stringify(data));
         const hay = `${valueHay} ${schemaHay}`;
 
-        if (tokens.length) {
-          const matched = tokens.filter((t) => hay.includes(t));
+        if (overviewIntent) {
+          // «Otel haqqında məlumat» → open whole sheet (name may be Rezervlər / Otel_…)
+          score = 0.5;
+          if (hasPriceCol) score += 0.2;
+          if (hasRoomCol) score += 0.15;
+          if (contentTokens.some((t) => hay.includes(t))) score += 0.3;
+        } else if (contentTokens.length) {
+          const matched = contentTokens.filter((t) => hay.includes(t));
           if (matched.length === 0) {
-            // Intent fallback: "qiymət nədir?" with no literal match → still return rows
-            // that have price columns (so agent can read real numbers).
+            // Intent fallback: "qiymət nədir?" → rows with price columns
             if (priceIntent && hasPriceCol) {
               score = 0.35;
             } else if (roomIntent && hasRoomCol) {
@@ -526,8 +542,8 @@ export class KnowledgeService {
               continue;
             }
           } else {
-            score = matched.length / tokens.length;
-            if (matched.length === tokens.length) score += 1;
+            score = matched.length / contentTokens.length;
+            if (matched.length === contentTokens.length) score += 1;
             if (priceIntent && hasPriceCol) score += 0.25;
             if (roomIntent && hasRoomCol) score += 0.2;
           }
@@ -545,9 +561,37 @@ export class KnowledgeService {
       }
     }
 
+    // Last resort: any rows exist but nothing scored → still return sheet contents
+    if (scored.length === 0 && scannedRecords > 0) {
+      for (const c of collections) {
+        for (const rec of c.records) {
+          scored.push({
+            collection: c.name,
+            collectionLabel: c.label,
+            recordId: rec.id,
+            data: (rec.data || {}) as Record<string, unknown>,
+            score: 0.1,
+          });
+        }
+      }
+    }
+
     scored.sort((a, b) => b.score - a.score);
     const results = scored.slice(0, limit).map(({ score: _s, ...rest }) => rest);
     const searchedLabels = collections.map((c) => c.label).join(", ") || "yoxdur";
+
+    // Compact summary so the agent can speak room types / prices without inventing
+    const summaryBits: string[] = [];
+    const seenTypes = new Set<string>();
+    for (const r of results) {
+      const d = r.data || {};
+      const typ = String(d.otaq_novu || d.roomType || d.type || "").trim();
+      const price = d.gecelik_qiymet_azn ?? d.price ?? d.qiymet;
+      if (typ && !seenTypes.has(typ)) {
+        seenTypes.add(typ);
+        summaryBits.push(price != null && price !== "" ? `${typ}: ${price} AZN` : typ);
+      }
+    }
 
     return {
       found: results.length > 0,
@@ -556,9 +600,13 @@ export class KnowledgeService {
       scannedRecords,
       collectionsSearched: searchedLabels,
       queryExpanded: tokens,
+      contentTokens,
+      overview: overviewIntent,
+      summary: summaryBits.length ? summaryBits.join("; ") : null,
       message:
         results.length > 0
-          ? `${results.length} nəticə tapıldı (${scannedCollections} siyahı / ${scannedRecords} sətir yoxlanıldı)`
+          ? `${results.length} nəticə tapıldı (${scannedCollections} siyahı / ${scannedRecords} sətir yoxlanıldı)` +
+            (summaryBits.length ? `. Qısa: ${summaryBits.join("; ")}` : "")
           : `Uyğun sətir tapılmadı — yoxlanılan siyahılar: ${searchedLabels}. Digər sözlə axtarın və ya alternativ təklif edin.`,
       results,
     };
@@ -636,15 +684,36 @@ export class KnowledgeService {
       };
     }
 
+    const phoneField =
+      fields.find((f) => ["telefon", "phone", "tel", "nomre"].includes(this.normalize(f.key))) ||
+      fields.find((f) => /telefon|phone|nomre/.test(this.normalize(f.label || "")));
+    if (phoneField && (clean[phoneField.key] == null || String(clean[phoneField.key]).trim() === "")) {
+      return {
+        ok: false,
+        message:
+          "Rezerv yazılmadı: telefon yoxdur. Müştəridən nömrəni alın və create_record-u yenidən çağırın.",
+        missing: [phoneField.key],
+        partial: clean,
+      };
+    }
+
     const record = await this.prisma.collectionRecord.create({
       data: { collectionId: collection.id, projectId, data: clean as object },
     });
     return {
       ok: true,
-      message: `«${collection.label}» siyahısına əlavə olundu`,
+      message: `«${collection.label}» siyahısına əlavə olundu. Müştəriyə yalnız bu yazılanları təsdiq et.`,
       collection: collection.label,
       recordId: record.id,
       data: clean,
+      spokenConfirmHint: [
+        clean[guestField?.key || ""] ? `Qonaq: ${clean[guestField!.key]}` : null,
+        phoneField && clean[phoneField.key] ? `Telefon: ${clean[phoneField.key]}` : null,
+        clean.gelis_saati ? `Gəliş: ${clean.gelis_saati}` : null,
+        clean.giris ? `Giriş: ${clean.giris}` : null,
+      ]
+        .filter(Boolean)
+        .join(", "),
     };
   }
 

@@ -29,16 +29,16 @@ export const SOFT_TIMEOUT_FILLERS_AZ = ["Bir saniyə…"] as const;
  * Call-center TTS: loud, clear Bakı phonemes + fast first audio.
  */
 export const TTS_CALL_CENTER = {
-  /** Slightly brisk phone pace — clear, not rushed */
-  speed: 1.02,
-  /** Lower stability = more natural Bakı intonation (less flat/robotic) */
-  stability: 0.32,
-  /** High similarity keeps the chosen voice identity */
-  similarity_boost: 0.88,
-  /** 4 = snappier first byte for quick operator replies */
+  /** Clear phone pace — slightly slower than before for cleaner AZ phonemes */
+  speed: 0.98,
+  /** Lower = more expressive Bakı intonation */
+  stability: 0.28,
+  /** Keep voice identity strong */
+  similarity_boost: 0.9,
+  /** Snappy first byte */
   optimize_streaming_latency: 4,
-  /** Client playback gain (1 = default; >1 louder on call UI) */
-  playbackVolume: 1.35,
+  /** Client playback gain */
+  playbackVolume: 1.45,
 } as const;
 
 /**

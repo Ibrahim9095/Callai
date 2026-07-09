@@ -64,7 +64,7 @@ const BARGE_IN_GATE = {
 } as const;
 
 /** Louder playback — real phone-operator presence */
-const PLAYBACK_VOLUME = 1.35;
+const PLAYBACK_VOLUME = 1.45;
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
