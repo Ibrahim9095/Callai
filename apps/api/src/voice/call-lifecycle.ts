@@ -19,13 +19,11 @@ export function inactiveProjectMessage(status: ProjectLifecycleStatus | string):
 /** Soft re-prompt when caller is silent during a live session. */
 export const SILENCE_REPROMPT_AZ = "Narahat olmayın, sizi dinləyirəm.";
 
-/** Fillers while LLM thinks — keeps the line feeling human, not frozen. */
-export const SOFT_TIMEOUT_FILLERS_AZ = [
-  "Bir saniyə…",
-  "Baxım…",
-  "Hmm…",
-  "Bir an…",
-] as const;
+/**
+ * Soft-timeout filler — ONE short phrase only.
+ * Stacking many fillers ("Bir an… Hmm… Baxım…") sounds robotic; keep a single human beat.
+ */
+export const SOFT_TIMEOUT_FILLERS_AZ = ["Bir saniyə…"] as const;
 
 /**
  * Call-center TTS: clear Bakı phonemes + fast first audio.
@@ -53,9 +51,12 @@ export const TURN_CALL_CENTER = {
   turn_eagerness: "normal" as const,
   speculative_turn: true,
   turn_model: "turn_v3",
-  /** Speak a filler if LLM is slow — feels human, not laggy */
-  soft_timeout_seconds: 2.5,
-  max_soft_timeouts_per_generation: 3,
+  /**
+   * One soft filler if LLM is slow — avoid stacking.
+   * 3.5s: fast replies skip filler; slow ones get a single human beat.
+   */
+  soft_timeout_seconds: 3.5,
+  max_soft_timeouts_per_generation: 1,
 } as const;
 
 /**

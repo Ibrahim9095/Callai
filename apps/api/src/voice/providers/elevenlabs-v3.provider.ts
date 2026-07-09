@@ -62,8 +62,9 @@ export function elevenTtsModel(): string {
   return (process.env.ELEVENLABS_TTS_MODEL || "eleven_v3_conversational").trim();
 }
 
+/** Prefer fast chat LLM for snappy Bakı call-center replies. */
 export function elevenLlm(): string {
-  return (process.env.ELEVENLABS_LLM || "gemini-2.5-flash").trim();
+  return (process.env.ELEVENLABS_LLM || "gpt-4o-mini").trim();
 }
 
 /** Jessica — bright warm conversational (Leyla / Bakı phone). Override via env. */
@@ -311,8 +312,8 @@ function buildAgentBody(spec: VoiceAgentSpec) {
         soft_timeout_config: {
           timeout_seconds: TURN_CALL_CENTER.soft_timeout_seconds,
           message: SOFT_TIMEOUT_FILLERS_AZ[0],
-          additional_soft_timeout_messages: [...SOFT_TIMEOUT_FILLERS_AZ.slice(1)],
-          randomize_fillers: true,
+          additional_soft_timeout_messages: [],
+          randomize_fillers: false,
           max_soft_timeouts_per_generation: TURN_CALL_CENTER.max_soft_timeouts_per_generation,
         },
       },
