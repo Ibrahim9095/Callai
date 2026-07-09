@@ -66,15 +66,14 @@ export function resolveElevenLabsVoiceId(opts: {
   voiceId?: string | null;
   gender?: "female" | "male" | "unknown" | "neutral";
 }): string {
-  // Default PoC voice (female-leaning, works with eleven_v3_conversational + az)
   const female =
     (typeof process !== "undefined" &&
       (process.env.ELEVENLABS_VOICE_ID_FEMALE || process.env.ELEVENLABS_VOICE_ID)) ||
     "FDs1ZX5J4e4f2c2erxtW";
-  // Optional dedicated male voice — if unset, keep female voice id but persona stays male
-  // (wrong pitch is better than crashing AZ TTS with an unsupported voice).
+  // Chris — male conversational (works with multilingual / az pipeline)
   const male =
-    (typeof process !== "undefined" && process.env.ELEVENLABS_VOICE_ID_MALE) || female;
+    (typeof process !== "undefined" && process.env.ELEVENLABS_VOICE_ID_MALE) ||
+    "iP95p4xoKVk53GoZ742B";
 
   const catalogId = (opts.voiceId || "").toLowerCase();
   const wantMale =

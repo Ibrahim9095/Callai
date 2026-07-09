@@ -22,12 +22,20 @@ const VOICES = [
 function suggestVoiceForPersona(persona: string): { provider: string; voiceId: string } | null {
   const p = (persona || "").trim().toLowerCase();
   const female = ["leyla", "nigar", "aysel", "gunel", "günel", "banu", "sevil", "narmin", "nərmin"];
-  const male = ["kamran", "tahir", "elnur", "elvin", "orxan", "tural", "murad", "babək", "babek", "anar"];
+  const male = ["kamran", "tahir", "elnur", "elvin", "orxan", "tural", "murad", "babək", "babek", "anar", "ibrahim", "əli", "ali", "fuad", "rasim"];
   const first = p.split(/\s+/)[0]?.replace(/[^a-zəğıöüçşüiı]/gi, "") || "";
-  if (female.includes(first) || /\bxanım\b/.test(p)) {
+  const norm = first
+    .replace(/ə/g, "e")
+    .replace(/ı/g, "i")
+    .replace(/ö/g, "o")
+    .replace(/ü/g, "u")
+    .replace(/ç/g, "c")
+    .replace(/ş/g, "s")
+    .replace(/ğ/g, "g");
+  if (female.includes(first) || female.includes(norm) || /\bxanım\b/.test(p)) {
     return { provider: "azure", voiceId: "az-AZ-BanuNeural" };
   }
-  if (male.includes(first) || /\bbəy\b|\bbey\b/.test(p)) {
+  if (male.includes(first) || male.includes(norm) || /\bbəy\b|\bbey\b/.test(p)) {
     return { provider: "azure", voiceId: "az-AZ-BabekNeural" };
   }
   return null;
@@ -72,13 +80,24 @@ export default function ProjectDetailPage() {
     setError("");
     setSaved(false);
     try {
+      const persona = String(agent.persona || "").trim();
+      if (!persona) {
+        setError("Operator adını yazın (məs: Kamran)");
+        setSaving(false);
+        return;
+      }
+      // Auto-pick gender voice if still on mismatched default
+      const suggested = suggestVoiceForPersona(persona);
+      const voiceProvider = agent.voiceProvider || suggested?.provider || "azure";
+      const voiceId = agent.voiceId || suggested?.voiceId || "az-AZ-BanuNeural";
       const updated = await api.updateAgent(id, {
-        persona: agent.persona,
+        persona,
         prompt: agent.prompt,
         language: agent.language,
-        voiceProvider: agent.voiceProvider,
-        voiceId: agent.voiceId,
-        greeting: agent.greeting || "",
+        voiceProvider,
+        voiceId,
+        // Clear greeting so next call builds from the new name
+        greeting: "",
       });
       setProject(updated);
       setAgent(updated.agent);

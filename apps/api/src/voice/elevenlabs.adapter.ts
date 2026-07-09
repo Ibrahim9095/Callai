@@ -124,7 +124,7 @@ function buildAgentBody(spec: ProjectAgentSpec) {
           prompt: spec.prompt,
           llm,
           temperature: 0.4,
-          // Do NOT include built-in end_call — customer hangs up only.
+          // Explicitly do not send built_in_tools.end_call
           tools: toElevenClientTools(),
         },
       },
@@ -132,7 +132,7 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         voice_id: voiceId,
         model_id: ttsModel,
         expressive_mode: true,
-        stability: 0.42,
+        stability: 0.45,
         similarity_boost: 0.8,
         speed: 1.0,
         optimize_streaming_latency: 3,
@@ -151,7 +151,6 @@ function buildAgentBody(spec: ProjectAgentSpec) {
         speculative_turn: true,
         turn_model: "turn_v3",
         spelling_patience: "auto",
-        // Soft re-prompt when customer is quiet (does NOT end the call)
         soft_timeout_config: {
           timeout_seconds: 7.5,
           message: "Buyurun, sizi dinləyirəm.",

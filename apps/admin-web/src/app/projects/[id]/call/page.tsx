@@ -194,6 +194,17 @@ export default function TestCallPage() {
     setPhase("ringing");
     pushLine({ role: "system", text: "Zəng edilir…" });
 
+    // Always reload saved persona from DB before dialing
+    try {
+      const p = await api.project(pid);
+      const name = String(p.agent?.persona || "").trim() || "Operator";
+      setOperatorName(name);
+      setProjectName(p.name);
+      setBusinessLabel(p.businessLabel || p.businessTemplate || "");
+    } catch {
+      /* keep existing */
+    }
+
     try {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
       if (Ctx) {
@@ -206,7 +217,7 @@ export default function TestCallPage() {
       /* ringtone optional */
     }
 
-    await new Promise((r) => setTimeout(r, 1200));
+    await new Promise((r) => setTimeout(r, 1000));
     if (!aliveRef.current) return;
 
     setPhase("connecting");
@@ -227,7 +238,8 @@ export default function TestCallPage() {
       const session = await api.voiceSession(pid);
       if (!aliveRef.current) return;
 
-      setOperatorName(session.operatorName || operatorName);
+      const liveName = String(session.operatorName || "").trim();
+      if (liveName) setOperatorName(liveName);
       setOperatorGender(session.operatorGender || "unknown");
       setBusinessLabel(session.businessLabel || businessLabel);
       setProjectName(session.projectName || projectName);
@@ -235,7 +247,7 @@ export default function TestCallPage() {
       localStreamRef.current = await micPromise;
       stopRingtone();
 
-      if (!session.token) throw new Error("Səs token alınmadı");
+      if (!session.token) throw new Error("Səs token alınmadı — yenidən yoxlayın");
 
       conversationRef.current = await Conversation.startSession({
         conversationToken: session.token,
@@ -263,13 +275,17 @@ export default function TestCallPage() {
           });
         },
         onError: (err: unknown) => {
-          // SDK may pass string OR (message, context) — never crash on shape
           const message = errMessage(err);
           if (!aliveRef.current) return;
-          // Soft errors: log but do not kill the call UI unless disconnected
           console.warn("ElevenLabs onError:", err);
+          // Benign / malformed SDK events — do NOT kill the call or flash red error
+          const soft =
+            !message ||
+            /unknown error/i.test(message) ||
+            /error_type/i.test(message) ||
+            message === "Server error: Unknown error";
+          if (soft) return;
           setError(message);
-          // Do not force phase=error on every soft warning — wait for disconnect
         },
         onModeChange: ({ mode }) => {
           if (!aliveRef.current) return;
@@ -286,10 +302,9 @@ export default function TestCallPage() {
     } catch (e: any) {
       stopRingtone();
       const msg = errMessage(e);
-      // Surface the real crash that used to be "error_type"
       setError(
-        msg.includes("error_type")
-          ? "Səs bağlantısı xətası (SDK). Səhifəni yeniləyib yenidən zəng edin."
+        /error_type|unknown error/i.test(msg)
+          ? "Səs bağlantısı alınmadı. Səhifəni yeniləyib yenidən yoxlayın."
           : msg || "Zəng başladılmadı",
       );
       setPhase("error");
@@ -366,8 +381,8 @@ export default function TestCallPage() {
 
           {phase === "idle" || phase === "ended" || phase === "error" ? (
             <p className="call-hint">
-              Operator adını layihə səhifəsində əl ilə yazın (Leyla / Kamran) → Yadda saxla → burada zəng
-              edin. Zəngi yalnız siz bitirin.
+              Layihədə operator adını yazın (Kamran, İbrahim, Leyla…) → Yadda saxla → burada zəng edin.
+              Ekranda və salamlamada məhz o ad görünəcək. Zəngi yalnız siz bitirin.
             </p>
           ) : null}
         </div>

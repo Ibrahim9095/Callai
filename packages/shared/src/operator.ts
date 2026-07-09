@@ -1,7 +1,7 @@
 /**
- * Operator display helpers for live calls (Azerbaijani).
- * Manual control: persona name is what the operator typed (Leyla / Kamran).
- * Gender follows the name first, then the selected voice catalog.
+ * Operator helpers — persona is EXACTLY what the operator typed in the panel.
+ * UI and greeting never invent "xanım"/"bəy" or a default name like Leyla.
+ * Gender is only used to pick male/female voice + prompt tone.
  */
 
 const FEMALE_NAMES = new Set(
@@ -9,11 +9,10 @@ const FEMALE_NAMES = new Set(
     "leyla", "aygun", "aygün", "gunel", "günel", "nigar", "sevil", "sevinc",
     "aysel", "aysəl", "narmin", "nərmin", "gunay", "günay", "lala", "lalə",
     "sabina", "kamala", "kamalə", "fatima", "fatimə", "maryam", "məryəm",
-    "banu", "ulviyye", "ülviyyə", "ulviyyə", "mehriban", "zumrud", "zümrüd",
-    "konul", "könül", "tarana", "təranə", "fidan", "gulnar", "gülnar",
-    "gulnara", "gülnarə", "rena", "sofya", "anna", "marina", "elena",
-    "nargiz", "nərgiz", "humay", "hümay", "aysu", "səidə", "seide",
-    "dilarə", "dilare", "afaq", "afag", "tünzalə", "tunzale",
+    "banu", "ulviyye", "ülviyyə", "mehriban", "zumrud", "zümrüd", "konul",
+    "könül", "tarana", "təranə", "fidan", "gulnar", "gülnar", "gulnara",
+    "gülnarə", "rena", "sofya", "anna", "marina", "elena", "nargiz", "nərgiz",
+    "humay", "hümay", "aysu", "səidə", "seide", "dilarə", "dilare", "afaq",
   ].map((s) => s.toLowerCase()),
 );
 
@@ -23,11 +22,10 @@ const MALE_NAMES = new Set(
     "kamran", "murad", "farid", "fərid", "ferid", "nijat", "nicat", "rufat",
     "rüfət", "babek", "babək", "anar", "samir", "elchin", "elçin", "elcin",
     "javad", "cavad", "huseyn", "hüseyn", "ali", "əli", "ibrahim", "isa",
-    "mahir", "nurlan", "tofig", "tofiq", "tahir", "tahır", "rasim",
-    "elshan", "elşən", "elsad", "elşad", "fuad", "kenan", "kənan",
-    "zahir", "zahid", "namig", "namiq", "qabil", "ilkin", "ilham",
-    "ramil", "ramiz", "sadiq", "sadıq", "emil", "ahmad", "əhməd", "ahmed",
-    "mehman", "orkhan", "vusale",
+    "mahir", "nurlan", "tofig", "tofiq", "tahir", "tahır", "rasim", "elshan",
+    "elşən", "elsad", "elşad", "fuad", "kenan", "kənan", "zahir", "zahid",
+    "namig", "namiq", "ilkin", "ilham", "ramil", "ramiz", "sadiq", "sadıq",
+    "emil", "ahmad", "əhməd", "ahmed", "mehman", "orkhan",
   ].map((s) => s.toLowerCase()),
 );
 
@@ -45,37 +43,25 @@ function normalizeAz(s: string): string {
     .replace(/ğ/g, "g");
 }
 
-/** True if persona looks like a job title, not a personal name. */
-export function isJobTitlePersona(persona: string): boolean {
-  const p = (persona || "").trim().toLowerCase();
-  if (!p) return true;
-  if (/\boperatoru?\b|\bresepşn\b|\bqeydiyyat\b|\bservis\b|\bmağaza\b/.test(p)) return true;
-  if (p.split(/\s+/).length >= 3) return true;
-  return false;
+/** Exact trimmed persona as typed — never rewrite. */
+export function exactPersonaName(persona: string | null | undefined): string {
+  const raw = String(persona ?? "").trim();
+  return raw || "Operator";
 }
 
-/** First personal name token from persona ("Kamran bəy" → "Kamran"). */
+/** First token for gender lookup only (strips trailing honorific if user typed it). */
 export function extractPersonaName(persona: string): string {
-  const raw = (persona || "").trim() || "Operator";
-  if (isJobTitlePersona(raw)) return "";
-  return (
-    raw
-      .replace(/\s+(xanım|xanim|bəy|bey|cənab|cenab)\s*$/i, "")
-      .trim()
-      .split(/\s+/)[0] || ""
-  );
+  return exactPersonaName(persona)
+    .replace(/\s+(xanım|xanim|bəy|bey|cənab|cenab)\s*$/i, "")
+    .trim()
+    .split(/\s+/)[0] || "";
 }
 
-/**
- * Gender: 1) explicit honorific in persona, 2) known first name,
- * 3) selected voice catalog, 4) unknown.
- * Never invent a name — only classify what the operator typed.
- */
 export function inferOperatorGender(
   persona: string,
   voiceId?: string | null,
 ): OperatorGender {
-  const p = (persona || "").trim().toLowerCase();
+  const p = exactPersonaName(persona).toLowerCase();
   if (/\bxanım\b|\bxanim\b|\bqadın\b/.test(p)) return "female";
   if (/\bbəy\b|\bbey\b|\bkişi\b|\bcənab\b/.test(p)) return "male";
 
@@ -87,30 +73,19 @@ export function inferOperatorGender(
   }
 
   const v = (voiceId || "").toLowerCase();
-  if (v.includes("banu") || v.includes("female") || v.includes("woman")) return "female";
-  if (v.includes("babek") || v.includes("babək") || v.includes("male") || v.includes("man")) {
-    return "male";
-  }
+  if (v.includes("banu") || v.includes("female")) return "female";
+  if (v.includes("babek") || v.includes("babək") || v.includes("male")) return "male";
   return "unknown";
 }
 
 /**
- * Display on call screen. If persona is a job title, show it as-is (no fake name).
- * If personal name: "Leyla xanım" / "Kamran bəy".
+ * @deprecated Use exactPersonaName — call UI must show the typed name only.
+ * Kept for compatibility; returns exact name WITHOUT xanım/bəy.
  */
-export function formatOperatorDisplayName(
-  persona: string,
-  gender: OperatorGender,
-): string {
-  const raw = (persona || "").trim() || "Operator";
-  if (isJobTitlePersona(raw)) return raw;
-  const name = extractPersonaName(raw) || raw;
-  if (gender === "female") return `${name} xanım`;
-  if (gender === "male") return `${name} bəy`;
-  return name;
+export function formatOperatorDisplayName(persona: string, _gender?: OperatorGender): string {
+  return exactPersonaName(persona);
 }
 
-/** Short role line for greeting */
 export function roleIntroduction(
   businessLabel: string,
   templateId?: string | null,
@@ -132,8 +107,8 @@ export function roleIntroduction(
 }
 
 /**
- * Greeting always uses the CURRENT manual persona.
- * Custom greeting kept only if it already contains the current personal name.
+ * Greeting uses EXACT persona (Kamran / İbrahim / Leyla) — no auto honorific.
+ * Ignores stale custom greeting that mentions a different name.
  */
 export function buildCallGreeting(opts: {
   persona: string;
@@ -143,19 +118,18 @@ export function buildCallGreeting(opts: {
   customGreeting?: string | null;
   projectName?: string | null;
 }): string {
-  const gender = inferOperatorGender(opts.persona, opts.voiceId);
-  const display = formatOperatorDisplayName(opts.persona || "Operator", gender);
-  const name = extractPersonaName(opts.persona);
+  const name = exactPersonaName(opts.persona);
   const role = roleIntroduction(opts.businessLabel, opts.templateId);
   const place = (opts.projectName || opts.businessLabel || "").trim();
 
   const custom = (opts.customGreeting || "").trim();
-  if (custom.length >= 20 && name && custom.toLowerCase().includes(name.toLowerCase())) {
+  // Keep custom only if it clearly contains THIS exact name (case-insensitive)
+  if (custom.length >= 12 && custom.toLowerCase().includes(name.toLowerCase())) {
     return custom;
   }
 
   const where = place ? `${place}-dən ` : "";
-  return `Salam, ${where}mən ${display}. ${capitalize(role)}. Buyurun, necə kömək edə bilərəm?`;
+  return `Salam, ${where}mən ${name}. ${capitalize(role)}. Buyurun, necə kömək edə bilərəm?`;
 }
 
 export function buildIdentityPrompt(opts: {
@@ -166,26 +140,25 @@ export function buildIdentityPrompt(opts: {
   projectName?: string | null;
   firstMessage: string;
 }): string {
+  const name = exactPersonaName(opts.persona);
   const gender = inferOperatorGender(opts.persona, opts.voiceId);
-  const display = formatOperatorDisplayName(opts.persona || "Operator", gender);
-  const name = extractPersonaName(opts.persona) || display;
   const role = roleIntroduction(opts.businessLabel, opts.templateId);
   const genderLine =
     gender === "female"
-      ? "Sən qadın operatorsan; səsin və xitabın qadın olmalıdır (xanım)."
+      ? "Sən qadın operatorsan; qadın səsi ilə danış."
       : gender === "male"
-        ? "Sən kişi operatorsan; səsin və xitabın kişi olmalıdır (bəy)."
-        : "Cinsiyyətinə uyğun xitab et.";
+        ? "Sən kişi operatorsan; kişi səsi ilə danış."
+        : "Paneldə seçilmiş səslə danış.";
 
   return `
-SƏNİN KİMLİYİN (operator panelindən əl ilə təyin olunub — dəyişmə):
-- Adın / persona: ${opts.persona || "Operator"}
-- Özünü belə təqdim et: ${display}
+SƏNİN ADIN (dəyişmə — panelden əl ilə yazılıb):
+- Adın dəqiq budur: «${name}»
+- Özünü yalnız «${name}» kimi təqdim et. «Leyla», «xanım», «bəy» və ya başqa ad UYDURMA.
 - İşin: ${capitalize(role)}
 - Layihə: ${opts.projectName || opts.businessLabel || "biznes"}
 - ${genderLine}
-- İlk salamlaman məhz budur: «${opts.firstMessage}»
-- Başqa ad uydurma. Yalnız paneldə yazılan persona ilə danış.
+- İlk cümlən məhz: «${opts.firstMessage}»
+- Heç vaxt başqa adla danışma.
 `.trim();
 }
 
@@ -194,8 +167,15 @@ function capitalize(s: string) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-/** Suggested default personal name when creating a project (operator can change). */
-export function defaultPersonaForTemplate(templateId: string, gender: OperatorGender = "female"): string {
-  if (gender === "male") return "Kamran";
-  return "Leyla";
+export function defaultPersonaForTemplate(
+  _templateId: string,
+  gender: OperatorGender = "female",
+): string {
+  return gender === "male" ? "Kamran" : "Leyla";
+}
+
+export function isJobTitlePersona(persona: string): boolean {
+  const p = exactPersonaName(persona).toLowerCase();
+  if (/\boperatoru?\b|\bresepşn\b|\bqeydiyyat\b/.test(p)) return true;
+  return p.split(/\s+/).length >= 3;
 }

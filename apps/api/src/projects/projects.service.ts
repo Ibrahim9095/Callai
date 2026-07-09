@@ -128,9 +128,7 @@ export class ProjectsService {
   }
 
   async updateAgent(organizationId: string, projectId: string, dto: UpdateAgentDto) {
-    await this.get(organizationId, projectId);
-    // Persona/prompt/greeting changes must re-sync to the voice provider on next call.
-    // Clear cached remote agent id so the next session PATCHes/recreates with the new name.
+    const project = await this.get(organizationId, projectId);
     const voiceAffecting =
       dto.persona !== undefined ||
       dto.prompt !== undefined ||
@@ -139,12 +137,33 @@ export class ProjectsService {
       dto.voiceProvider !== undefined ||
       dto.voiceId !== undefined;
 
+    const data: Record<string, unknown> = { ...dto };
+
+    // If persona name changed, drop stale greeting that still says the old name
+    // and force ElevenLabs re-sync on next call.
+    if (dto.persona !== undefined) {
+      const next = String(dto.persona).trim();
+      const prev = (project.agent?.persona || "").trim();
+      if (next && next !== prev) {
+        data.externalAgentId = null;
+        if (dto.greeting === undefined) {
+          data.greeting = null;
+        } else if (
+          dto.greeting &&
+          !String(dto.greeting).toLowerCase().includes(next.toLowerCase())
+        ) {
+          data.greeting = null;
+        }
+      }
+    }
+
+    if (voiceAffecting) {
+      data.externalAgentId = null;
+    }
+
     await this.prisma.agent.update({
       where: { projectId },
-      data: {
-        ...dto,
-        ...(voiceAffecting ? { externalAgentId: null } : {}),
-      },
+      data,
     });
     return this.get(organizationId, projectId);
   }

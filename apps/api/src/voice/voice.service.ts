@@ -2,8 +2,8 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import {
   buildCallGreeting,
   buildIdentityPrompt,
+  exactPersonaName,
   extractPersonaName,
-  formatOperatorDisplayName,
   getBusinessTemplate,
   inferOperatorGender,
 } from "@aivoiceos/shared";
@@ -44,6 +44,7 @@ export class VoiceService {
   }
 
   async createSession(organizationId: string, projectId: string) {
+    // Always re-read from DB so the latest saved persona is used (no stale cache).
     const project = await this.loadProject(organizationId, projectId);
 
     if (!elevenConfigured()) {
@@ -54,20 +55,30 @@ export class VoiceService {
 
     const agent = project.agent!;
     const businessLabel = this.businessLabelOf(project);
-    // Gender from manual persona name first, then selected voice
-    const gender = inferOperatorGender(agent.persona, agent.voiceId);
-    const operatorName = formatOperatorDisplayName(agent.persona || "Operator", gender);
+    const persona = exactPersonaName(agent.persona);
+    const gender = inferOperatorGender(persona, agent.voiceId);
+
+    // Drop stale greeting that still mentions an old name (e.g. Leyla after rename to Kamran)
+    let greeting = (agent.greeting || "").trim() || null;
+    if (greeting && !greeting.toLowerCase().includes(persona.toLowerCase())) {
+      greeting = null;
+      await this.prisma.agent.update({
+        where: { projectId },
+        data: { greeting: null },
+      });
+    }
+
     const firstMessage = buildCallGreeting({
-      persona: agent.persona,
+      persona,
       businessLabel,
       templateId: project.businessTemplate,
       voiceId: agent.voiceId,
-      customGreeting: agent.greeting,
+      customGreeting: greeting,
       projectName: project.name,
     });
 
     const identity = buildIdentityPrompt({
-      persona: agent.persona,
+      persona,
       businessLabel,
       templateId: project.businessTemplate,
       voiceId: agent.voiceId,
@@ -80,22 +91,26 @@ export class VoiceService {
       AZ_PREMIUM_STYLE,
       (agent.prompt || "").trim(),
       VOICE_RUNTIME_RULES,
-      "ZƏNGİ HEÇ VAXT KƏSMƏ. end_call yoxdur. Yalnız müştəri zəngi bitirir.",
+      `SƏNİN ADIN İNDİ: «${persona}». Başqa ad (Leyla və s.) demə.`,
+      "ZƏNGİ HEÇ VAXT KƏSMƏ. Yalnız müştəri bitirir.",
     ]
       .filter(Boolean)
       .join("\n\n");
 
-    const name = extractPersonaName(agent.persona);
+    // Always force a full sync of first_message + prompt + voice for this persona.
+    // Recreate when cache was cleared on save; otherwise PATCH.
     const forceRecreate = agent.externalAgentId == null;
 
     const { agent_id, recreated } = await ensureProjectElevenAgent({
       projectId: project.id,
       projectName: project.name,
-      persona: agent.persona,
+      persona,
       prompt: fullPrompt,
       firstMessage,
       language: agent.language || "az",
-      keywords: [name, operatorName, project.name, businessLabel].filter(Boolean) as string[],
+      keywords: [persona, extractPersonaName(persona), project.name, businessLabel].filter(
+        Boolean,
+      ) as string[],
       cachedAgentId: agent.externalAgentId,
       forceRecreate,
       catalogVoiceId: agent.voiceId,
@@ -118,7 +133,8 @@ export class VoiceService {
       projectId: project.id,
       projectName: project.name,
       businessLabel,
-      operatorName,
+      // Exact typed name — never "Leyla xanım"
+      operatorName: persona,
       operatorGender: gender,
       firstMessage,
       tools: [...AGENT_TOOL_NAMES],
