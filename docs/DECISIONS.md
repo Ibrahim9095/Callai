@@ -28,32 +28,31 @@ history.
 - **Consequences:** Strong typing and structure; the current JS PoC is migrated
   incrementally. Slight ramp-up vs plain Express, justified by longevity.
 
-## ADR-0003 — Voice engine: OpenAI Realtime default (provider-agnostic port)
+## ADR-0003 — Voice engine: ElevenLabs v3 default (provider-agnostic port)
 
-- **Status:** Accepted (OpenAI Realtime supersedes Edge Neural as production default)
-- **Context:** Call-center operators need **1–2s** reply latency. Multi-hop
-  browser STT → chat → TTS often took 8–10s. ElevenLabs is rejected (cost).
-  OpenAI Realtime provides speech-to-speech with built-in STT transcription,
-  barge-in (`interrupt_response`), and official TTS voices.
+- **Status:** Accepted (ElevenLabs v3 supersedes OpenAI Realtime as production default)
+- **Context:** Azerbaijani call-center operators must sound **indistinguishable
+  from a real Bakı speaker**. OpenAI Realtime is multilingual but not native AZ
+  dialect. ElevenLabs `eleven_v3_conversational` supports `az`, expressive
+  delivery, and pronunciation dictionaries.
 
   | Option | AZ quality | Latency | Cost | Verdict |
   |--------|------------|---------|------|---------|
-  | **OpenAI Realtime** | High (multilingual) | **~1–2s** | Usage | **Production default** |
+  | **ElevenLabs v3** | **Native AZ (Bakı)** | Low (Agents WS) | Usage | **Production default** |
+  | OpenAI Realtime | High (multilingual) | **~1–2s** | Usage | Optional (`VOICE_PROVIDER=openai`) |
   | Edge Neural Banu/Babek | Native AZ | Higher (pipeline) | $0 TTS | Dev/fallback |
   | Azure Speech | Native AZ + SLA | Low | Paid | Future adapter |
-  | ElevenLabs | Good | Medium | High | **Rejected** |
 
 - **Decision:**
   1. `VoiceProvider` port in `@aivoiceos/voice-engine`.
-  2. **Default: `openai`** — Realtime WebRTC via ephemeral `client_secrets`.
-  3. **All model IDs from env** (never hardcode in call paths):
-     `OPENAI_REALTIME_MODEL`, `OPENAI_STT_MODEL`, `OPENAI_TTS_MODEL`,
-     `OPENAI_CHAT_MODEL`, `OPENAI_VOICE` / `_FEMALE` / `_MALE`.
-  4. Server VAD: `silence_duration_ms≈400`, `interrupt_response=true` (barge-in).
-  5. `edge_neural` remains a free fallback when `VOICE_PROVIDER=edge_neural`.
-  6. ElevenLabs disabled by policy.
-- **Consequences:** Low-latency human-like calls; OpenAI usage cost; upgrade
-  models by changing env only. Edge Neural kept for offline/dev.
+  2. **Default: `elevenlabs`** — Agents + `eleven_v3_conversational`, language `az`.
+  3. Prefer **signed WebSocket URL** (avoid LiveKit DataChannel drop after greeting).
+  4. Env-driven: `ELEVENLABS_API_KEY`, `ELEVENLABS_TTS_MODEL`, voice IDs, LLM,
+     pronunciation dicts. `end_call` disabled; `silence_end_call_timeout: -1`.
+  5. Dialect prompts + expressive audio tags so speech is not detectable as AI.
+  6. `openai` / `edge_neural` remain swappable via `VOICE_PROVIDER`.
+- **Consequences:** Native-sounding AZ operators; ElevenLabs usage cost; swap
+  engines by env without rewriting call orchestration.
 
 ## ADR-0004 — Telephony for Azerbaijan: BYO local SIP trunk (e.g. DIDWW)
 
@@ -95,7 +94,7 @@ history.
 
 ## Pending confirmations (blockers for code scaffolding)
 
-- ADR-0003 (voice default = Azure) → confirm.
+- ADR-0003 (voice default = ElevenLabs v3) → accepted.
 - ADR-0004 (telephony via local SIP/DIDWW; browser calls for PoC) → confirm.
 - Auth provider choice (Clerk / Supabase / self-host Keycloak) → to be decided
   before the admin-web milestone.

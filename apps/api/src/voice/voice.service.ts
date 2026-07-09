@@ -23,6 +23,7 @@ import { composeVoicePrompt } from "./prompt-composer";
 import { resolveVoiceProvider, defaultVoiceProviderId } from "./providers/registry";
 import { resolveTtsVoiceId } from "@aivoiceos/voice-engine";
 import { resolveOpenAiVoice } from "./providers/openai-config";
+import { resolveElevenVoiceId } from "./providers/elevenlabs-v3.provider";
 
 @Injectable()
 export class VoiceService {
@@ -69,25 +70,23 @@ export class VoiceService {
       speechSpeed?: number | null;
       temperature?: number | null;
       maxTokens?: number | null;
-    };
+    } | null;
   }) {
-    const agent = project.agent!;
+    const agent = project.agent;
+    if (!agent) throw new BadRequestException("Agent konfiqurasiyası yoxdur");
     const businessLabel = this.businessLabelOf(project);
     const operator = resolveOperator(agent.persona);
     const persona = operator.name;
     const gender = operator.gender;
     const companyName = (project.name || businessLabel || "").trim();
     const providerHint = defaultVoiceProviderId();
+    const rawVoice = agent.voiceId || operator.voiceId;
     const ttsVoiceId =
-      providerHint === "openai"
-        ? resolveOpenAiVoice({
-            voiceId: agent.voiceId || operator.voiceId,
-            gender,
-          })
-        : resolveTtsVoiceId({
-            voiceId: agent.voiceId || operator.voiceId,
-            gender,
-          });
+      providerHint === "elevenlabs"
+        ? resolveElevenVoiceId({ voiceId: rawVoice, gender })
+        : providerHint === "openai"
+          ? resolveOpenAiVoice({ voiceId: rawVoice, gender })
+          : resolveTtsVoiceId({ voiceId: rawVoice, gender });
     const speechSpeed = normalizeSpeechSpeed(agent.speechSpeed);
     const ttsRate = speechSpeedToEdgeRate(speechSpeed);
 
@@ -149,11 +148,11 @@ export class VoiceService {
     const project = await this.loadProject(organizationId, projectId);
     this.assertVoiceActive(project);
 
-    // Production default is env VOICE_PROVIDER (openai Realtime) — not per-row lock-in
+    // Production default is env VOICE_PROVIDER (elevenlabs v3) — not per-row lock-in
     const provider = resolveVoiceProvider();
     if (!provider.configured()) {
       throw new BadRequestException(
-        `Voice provider (${provider.id}) konfiqurasiya olunmayıb. OPENAI_API_KEY yoxlayın.`,
+        `Voice provider (${provider.id}) konfiqurasiya olunmayıb. ELEVENLABS_API_KEY yoxlayın.`,
       );
     }
 
@@ -161,13 +160,20 @@ export class VoiceService {
     const bundle = this.buildPromptBundle(project);
     const engineId = defaultVoiceProviderId();
 
-    // Keep agent row aligned with active engine + catalog persona
-    const needsSync =
+    // Reuse cached ElevenLabs agent id when still on same engine+voice+persona
+    const canReuseExternal =
+      engineId === "elevenlabs" &&
+      Boolean(agent.externalAgentId) &&
+      (agent.persona || "").trim() === bundle.persona &&
+      agent.voiceProvider === engineId &&
+      agent.voiceId === bundle.ttsVoiceId;
+
+    const needsMetaSync =
       (agent.persona || "").trim() !== bundle.persona ||
       agent.voiceProvider !== engineId ||
-      agent.voiceId !== bundle.ttsVoiceId ||
-      Boolean(agent.externalAgentId);
-    if (needsSync) {
+      agent.voiceId !== bundle.ttsVoiceId;
+
+    if (needsMetaSync && !canReuseExternal) {
       await this.prisma.agent.update({
         where: { projectId },
         data: {
@@ -175,6 +181,15 @@ export class VoiceService {
           voiceProvider: engineId,
           voiceId: bundle.ttsVoiceId,
           externalAgentId: null,
+        },
+      });
+    } else if (needsMetaSync) {
+      await this.prisma.agent.update({
+        where: { projectId },
+        data: {
+          persona: bundle.persona,
+          voiceProvider: engineId,
+          voiceId: bundle.ttsVoiceId,
         },
       });
     }
@@ -191,8 +206,24 @@ export class VoiceService {
       voiceProvider: engineId,
       temperature: bundle.temperature,
       maxTokens: bundle.maxTokens,
-      cachedExternalId: null,
+      cachedExternalId: canReuseExternal ? agent.externalAgentId : null,
     });
+
+    // Persist ElevenLabs agent id for faster subsequent syncs
+    if (
+      session.externalAgentId &&
+      (session.externalAgentId !== agent.externalAgentId || needsMetaSync)
+    ) {
+      await this.prisma.agent.update({
+        where: { projectId },
+        data: {
+          persona: bundle.persona,
+          voiceProvider: engineId,
+          voiceId: bundle.ttsVoiceId,
+          externalAgentId: session.externalAgentId,
+        },
+      });
+    }
 
     return {
       provider: session.provider,
@@ -200,7 +231,7 @@ export class VoiceService {
       connectionType: session.transport,
       signedUrl: session.signedUrl,
       token: session.token,
-      /** Ephemeral Realtime key (alias for token) */
+      /** Ephemeral key (OpenAI) or conversation token (ElevenLabs WebRTC fallback) */
       value: session.token,
       client_secret: session.token ? { value: session.token } : undefined,
       agent_id: session.externalAgentId,

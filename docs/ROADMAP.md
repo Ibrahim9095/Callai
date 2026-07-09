@@ -25,9 +25,10 @@ provider-agnostic Edge Neural pipeline (ADR-0003).
 
 ## v0.4.0 — Voice engine abstraction (current)
 
-- `@aivoiceos/voice-engine` port + **OpenAI Realtime** default
-  (WebRTC speech-to-speech, env-driven models, barge-in). Edge Neural fallback.
-- Per-project operator (Leyla/Samir) + OpenAI voices (marin/cedar).
+- `@aivoiceos/voice-engine` port + **ElevenLabs v3** default
+  (`eleven_v3_conversational`, language `az`, WebSocket signed URL).
+  OpenAI Realtime optional; Edge Neural fallback.
+- Per-project operator (Leyla/Samir) + ElevenLabs voices (Fili / male).
 - Target reply latency 1–2s; ElevenLabs removed.
 
 ## v0.5.0 — Knowledge engine

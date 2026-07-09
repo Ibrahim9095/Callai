@@ -1,8 +1,11 @@
 /**
- * CallAI live call — OpenAI Realtime WebRTC (primary) + pipeline fallback.
+ * CallAI live call — ElevenLabs v3 Conversational (WebSocket signed URL).
  *
- * Realtime path: mic → OpenAI speech-to-speech → speaker (target 1–2s latency).
- * Barge-in: server VAD interrupt_response + local audio ducking on speech_started.
+ * Prefer websocket over LiveKit WebRTC: after first_message the agent can leave
+ * the LiveKit room and DataChannel errors kill the session. WebSocket stays up
+ * until the user hangs up.
+ *
+ * Speech: eleven_v3_conversational + az language + Bakı dialect prompts.
  */
 
 "use client";
@@ -10,7 +13,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { Conversation } from "@elevenlabs/client";
 import { api, getToken } from "@/lib/api";
+
+const TOOL_NAMES = [
+  "list_collections",
+  "search_records",
+  "create_record",
+  "update_record",
+] as const;
 
 type Phase =
   | "idle"
@@ -54,6 +65,18 @@ function errMessage(err: unknown): string {
   return "Naməlum xəta";
 }
 
+function isSoftVoiceError(message: string): boolean {
+  const m = (message || "").trim();
+  if (!m || m === "{}" || m === "[object Object]") return true;
+  return (
+    /unknown error/i.test(m) ||
+    /error_type/i.test(m) ||
+    /datachannel/i.test(m) ||
+    /^server error:\s*unknown error/i.test(m) ||
+    /^server error:\s*\{\s*\}$/i.test(m)
+  );
+}
+
 function labelTool(name: string) {
   const map: Record<string, string> = {
     list_collections: "Kolleksiyalar",
@@ -77,7 +100,7 @@ export default function TestCallPage() {
   const [tools, setTools] = useState<ToolRow[]>([]);
   const [muted, setMuted] = useState(false);
   const [level, setLevel] = useState(0);
-  const [engineLabel, setEngineLabel] = useState("openai");
+  const [engineLabel, setEngineLabel] = useState("elevenlabs");
   const [modelLabel, setModelLabel] = useState("");
   const [connected, setConnected] = useState(false);
 
@@ -85,15 +108,14 @@ export default function TestCallPage() {
   const aliveRef = useRef(true);
   const inCallRef = useRef(false);
   const sessionGenerationRef = useRef(0);
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const dcRef = useRef<RTCDataChannel | null>(null);
+  const conversationRef = useRef<Awaited<
+    ReturnType<typeof Conversation.startSession>
+  > | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
-  const greetedRef = useRef(false);
-  const firstMessageRef = useRef("");
   const meterCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef(0);
   const mutedRef = useRef(false);
+  const intentionalHangupRef = useRef(false);
 
   useEffect(() => {
     aliveRef.current = true;
@@ -137,7 +159,8 @@ export default function TestCallPage() {
       try {
         const Ctx =
           window.AudioContext ||
-          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          (window as unknown as { webkitAudioContext: typeof AudioContext })
+            .webkitAudioContext;
         const ctx = new Ctx();
         meterCtxRef.current = ctx;
         if (ctx.state === "suspended") void ctx.resume();
@@ -165,228 +188,89 @@ export default function TestCallPage() {
     setLines((prev) => [...prev.slice(-40), { ...line, id: uid() }]);
   }, []);
 
-  const sendEvent = useCallback((event: Record<string, unknown>) => {
-    const dc = dcRef.current;
-    if (dc?.readyState === "open") {
-      dc.send(JSON.stringify(event));
+  const endConversation = useCallback(async () => {
+    const conv = conversationRef.current;
+    conversationRef.current = null;
+    if (!conv) return;
+    try {
+      await conv.endSession?.();
+    } catch {
+      /* ignore */
     }
   }, []);
 
   const hangup = useCallback(async () => {
+    intentionalHangupRef.current = true;
     inCallRef.current = false;
     sessionGenerationRef.current += 1;
-    greetedRef.current = false;
     stopMeter();
-    try {
-      dcRef.current?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      pcRef.current?.getSenders().forEach((s) => s.track?.stop());
-      pcRef.current?.close();
-    } catch {
-      /* ignore */
-    }
+    await endConversation();
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.pause();
-      remoteAudioRef.current.srcObject = null;
-    }
-    pcRef.current = null;
-    dcRef.current = null;
     localStreamRef.current = null;
     setConnected(false);
     setMuted(false);
     mutedRef.current = false;
     setPhase("idle");
-  }, [stopMeter]);
+  }, [endConversation, stopMeter]);
 
   useEffect(() => {
     return () => {
       aliveRef.current = false;
       inCallRef.current = false;
       sessionGenerationRef.current += 1;
-      try {
-        dcRef.current?.close();
-      } catch {
-        /* ignore */
-      }
-      try {
-        pcRef.current?.close();
-      } catch {
-        /* ignore */
-      }
+      stopMeter();
+      const conv = conversationRef.current;
+      conversationRef.current = null;
+      if (conv) void conv.endSession?.().catch(() => undefined);
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
-      cancelAnimationFrame(rafRef.current);
-      if (meterCtxRef.current) void meterCtxRef.current.close().catch(() => undefined);
     };
-  }, []);
+  }, [stopMeter]);
 
-  const handleToolCall = useCallback(
-    async (event: { name?: string; call_id?: string; arguments?: string }) => {
-      const name = String(event.name || "");
-      const callId = String(event.call_id || "");
-      let args: Record<string, unknown> = {};
-      try {
-        args = event.arguments ? JSON.parse(event.arguments) : {};
-      } catch {
-        args = {};
-      }
-
-      const toolId = uid();
-      setTools((prev) => [...prev.slice(-19), { id: toolId, name, status: "running", args }]);
-      setPhase("tool");
-
-      let result: unknown;
-      try {
-        result = await api.voiceTool(pid, name, args);
-        setTools((prev) =>
-          prev.map((t) => (t.id === toolId ? { ...t, status: "done" as const } : t)),
-        );
-      } catch (e: unknown) {
-        result = { error: errMessage(e) };
-        setTools((prev) =>
-          prev.map((t) => (t.id === toolId ? { ...t, status: "error" as const } : t)),
-        );
-      }
-
-      sendEvent({
-        type: "conversation.item.create",
-        item: {
-          type: "function_call_output",
-          call_id: callId,
-          output: JSON.stringify(result),
-        },
-      });
-      sendEvent({ type: "response.create" });
-    },
-    [pid, sendEvent],
-  );
-
-  const handleServerEvent = useCallback(
-    (raw: MessageEvent) => {
-      let event: Record<string, any>;
-      try {
-        event = JSON.parse(String(raw.data));
-      } catch {
-        return;
-      }
-
-      switch (event.type) {
-        case "input_audio_buffer.speech_started":
-          // Barge-in: duck remote audio immediately
-          if (remoteAudioRef.current) {
-            try {
-              remoteAudioRef.current.pause();
-            } catch {
-              /* ignore */
-            }
+  function buildClientTools(generation: number) {
+    const tools: Record<
+      string,
+      (params?: Record<string, unknown>) => Promise<string>
+    > = {};
+    for (const name of TOOL_NAMES) {
+      tools[name] = async (params = {}) => {
+        if (!aliveRef.current || sessionGenerationRef.current !== generation) {
+          return JSON.stringify({ error: "Sessiya bitib" });
+        }
+        const toolId = uid();
+        setTools((prev) => [
+          ...prev.slice(-19),
+          { id: toolId, name, status: "running", args: params },
+        ]);
+        setPhase("tool");
+        try {
+          const result = await api.voiceTool(pid, name, params || {});
+          setTools((prev) =>
+            prev.map((t) => (t.id === toolId ? { ...t, status: "done" as const } : t)),
+          );
+          if (aliveRef.current && sessionGenerationRef.current === generation) {
+            setPhase("live");
           }
-          setPhase("listening");
-          break;
-        case "input_audio_buffer.speech_stopped":
-          setPhase("thinking");
-          break;
-        case "response.created":
-        case "response.output_audio.delta":
-        case "response.audio.delta":
-          setPhase("speaking");
-          if (remoteAudioRef.current?.paused) {
-            void remoteAudioRef.current.play().catch(() => undefined);
+          return typeof result === "string" ? result : JSON.stringify(result ?? { ok: true });
+        } catch (e: unknown) {
+          setTools((prev) =>
+            prev.map((t) => (t.id === toolId ? { ...t, status: "error" as const } : t)),
+          );
+          if (aliveRef.current && sessionGenerationRef.current === generation) {
+            setPhase("live");
           }
-          break;
-        case "response.done":
-          setPhase("live");
-          break;
-        case "conversation.item.input_audio_transcription.completed":
-          if (event.transcript) {
-            pushLine({ role: "user", text: String(event.transcript).trim() });
-          }
-          break;
-        case "response.output_audio_transcript.done":
-        case "response.audio_transcript.done":
-          if (event.transcript) {
-            pushLine({ role: "assistant", text: String(event.transcript).trim() });
-          }
-          break;
-        case "response.function_call_arguments.done":
-          void handleToolCall(event);
-          break;
-        case "error":
-          pushLine({
-            role: "system",
-            text: event.error?.message || "Realtime xətası",
-          });
-          break;
-        default:
-          break;
-      }
-    },
-    [handleToolCall, pushLine],
-  );
-
-  const configureAndGreet = useCallback(() => {
-    // Session already configured via client_secrets; reinforce low-latency VAD + barge-in
-    sendEvent({
-      type: "session.update",
-      session: {
-        type: "realtime",
-        audio: {
-          input: {
-            turn_detection: {
-              type: "server_vad",
-              threshold: 0.5,
-              prefix_padding_ms: 200,
-              silence_duration_ms: 400,
-              create_response: true,
-              interrupt_response: true,
-            },
-          },
-        },
-      },
-    });
-
-    if (greetedRef.current) return;
-    greetedRef.current = true;
-    const greeting = firstMessageRef.current.trim();
-    if (greeting) {
-      pushLine({ role: "assistant", text: greeting });
+          return JSON.stringify({ error: errMessage(e) });
+        }
+      };
     }
-    sendEvent({
-      type: "response.create",
-      response: {
-        output_modalities: ["audio"],
-        instructions: greeting
-          ? `Zəngi aç. İlk cümlən MƏHZ bu olsun (dəyişmə): «${greeting}». Sonra SUS və dinlə. Yenidən salamlaşma. Bot/AI demə.`
-          : "Qısa peşəkar salamla, adını və şirkəti de, sonra dinlə. Bot/AI demə.",
-      },
-    });
-  }, [pushLine, sendEvent]);
+    return tools;
+  }
 
   async function startCall() {
-    // Tear down any previous peer without flipping generation twice
+    intentionalHangupRef.current = false;
     inCallRef.current = false;
-    greetedRef.current = false;
     stopMeter();
-    try {
-      dcRef.current?.close();
-    } catch {
-      /* ignore */
-    }
-    try {
-      pcRef.current?.getSenders().forEach((s) => s.track?.stop());
-      pcRef.current?.close();
-    } catch {
-      /* ignore */
-    }
+    await endConversation();
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.pause();
-      remoteAudioRef.current.srcObject = null;
-    }
-    pcRef.current = null;
-    dcRef.current = null;
     localStreamRef.current = null;
 
     sessionGenerationRef.current += 1;
@@ -399,7 +283,7 @@ export default function TestCallPage() {
     mutedRef.current = false;
     setPhase("connecting");
     setConnected(true);
-    pushLine({ role: "system", text: "OpenAI Realtime qoşulur…" });
+    pushLine({ role: "system", text: "ElevenLabs v3 qoşulur…" });
 
     try {
       const p = await api.project(pid);
@@ -424,80 +308,114 @@ export default function TestCallPage() {
       setOperatorName(session.operatorName || operatorName);
       setBusinessLabel(session.companyName || session.businessLabel || businessLabel);
       setProjectName(session.projectName || projectName);
-      setEngineLabel(session.engine || session.provider || "openai");
-      setModelLabel(session.model || "");
-      firstMessageRef.current = session.firstMessage || "";
+      setEngineLabel(session.engine || session.provider || "elevenlabs");
+      setModelLabel(session.model || "eleven_v3_conversational");
 
-      const ephemeralKey =
-        session.value || session.token || session.client_secret?.value || "";
-      if (!ephemeralKey || session.transport !== "webrtc") {
+      const signedUrl = session.signedUrl as string | undefined;
+      const conversationToken =
+        (session.token as string | undefined) ||
+        (session.value as string | undefined) ||
+        undefined;
+
+      if (!signedUrl && !conversationToken) {
         throw new Error(
-          "OpenAI Realtime token alınmadı. OPENAI_API_KEY və VOICE_PROVIDER=openai yoxlayın.",
+          "ElevenLabs sessiya alınmadı. ELEVENLABS_API_KEY və VOICE_PROVIDER=elevenlabs yoxlayın.",
         );
       }
 
-      const localStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      localStreamRef.current = localStream;
-      startMeter(localStream);
-
-      const pc = new RTCPeerConnection();
-      pcRef.current = pc;
-
-      pc.ontrack = (event) => {
-        const stream = event.streams[0];
-        if (!remoteAudioRef.current) {
-          remoteAudioRef.current = new Audio();
-          remoteAudioRef.current.autoplay = true;
-        }
-        remoteAudioRef.current.srcObject = stream;
-        void remoteAudioRef.current.play().catch(() => undefined);
-      };
-
-      for (const track of localStream.getTracks()) {
-        pc.addTrack(track, localStream);
+      try {
+        const localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        localStreamRef.current = localStream;
+        startMeter(localStream);
+      } catch {
+        /* SDK requests mic */
       }
 
-      const dc = pc.createDataChannel("oai-events");
-      dcRef.current = dc;
-      dc.onopen = () => {
-        if (sessionGenerationRef.current !== generation) return;
-        inCallRef.current = true;
-        setPhase("live");
-        configureAndGreet();
-      };
-      dc.onmessage = (ev) => handleServerEvent(ev);
+      const sessionOpts = signedUrl
+        ? {
+            signedUrl,
+            connectionType: "websocket" as const,
+          }
+        : {
+            conversationToken: conversationToken!,
+            connectionType: "webrtc" as const,
+          };
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      const sdpResponse = await fetch("https://api.openai.com/v1/realtime/calls", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ephemeralKey}`,
-          "Content-Type": "application/sdp",
+      conversationRef.current = await Conversation.startSession({
+        ...sessionOpts,
+        clientTools: buildClientTools(generation),
+        onConnect: () => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          inCallRef.current = true;
+          setPhase("live");
+          pushLine({
+            role: "system",
+            text: "Zəng açıldı — salamdan sonra danışa bilərsiniz",
+          });
+          if (session.firstMessage) {
+            pushLine({ role: "assistant", text: String(session.firstMessage) });
+          }
         },
-        body: offer.sdp || "",
-      });
-
-      if (!sdpResponse.ok) {
-        const errText = await sdpResponse.text();
-        throw new Error(`WebRTC qoşulması uğursuz: ${errText.slice(0, 240) || sdpResponse.status}`);
-      }
-
-      await pc.setRemoteDescription({
-        type: "answer",
-        sdp: await sdpResponse.text(),
+        onDisconnect: (details?: {
+          reason?: string;
+          context?: { type?: string; reason?: string };
+        }) => {
+          if (sessionGenerationRef.current !== generation) return;
+          inCallRef.current = false;
+          conversationRef.current = null;
+          if (!aliveRef.current) return;
+          setConnected(false);
+          setPhase("idle");
+          const reason = details?.reason || details?.context?.type || "";
+          pushLine({
+            role: "system",
+            text: intentionalHangupRef.current
+              ? "Zəngi bitirdiniz"
+              : reason === "agent"
+                ? "Sessiya gözlənilmədən bağlandı — yenidən «Zəngi başlat» basın"
+                : "Bağlantı kəsildi — yenidən «Zəngi başlat» basın",
+          });
+        },
+        onError: (err: unknown) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          const message = typeof err === "string" ? err : errMessage(err);
+          if (isSoftVoiceError(message)) {
+            console.debug("Soft voice error (ignored):", message);
+            return;
+          }
+          setError(message);
+          setPhase("error");
+        },
+        onModeChange: ({ mode }) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          if (mode === "speaking") setPhase("speaking");
+          else if (mode === "listening") setPhase("listening");
+          else setPhase("live");
+        },
+        onMessage: (message) => {
+          if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
+          const role = message?.source === "user" ? "user" : "assistant";
+          const text = String(
+            message?.message || (message as { text?: string })?.text || "",
+          ).trim();
+          if (text) pushLine({ role, text });
+        },
       });
     } catch (e: unknown) {
       inCallRef.current = false;
       setConnected(false);
-      setError(errMessage(e) || "Zəng başladılmadı");
+      const msg = errMessage(e);
+      setError(
+        isSoftVoiceError(msg)
+          ? "Səs bağlantısı alınmadı. Səhifəni yeniləyib yenidən yoxlayın."
+          : msg || "Zəng başladılmadı",
+      );
       setPhase("error");
       await hangup();
     }
@@ -507,15 +425,23 @@ export default function TestCallPage() {
     const next = !muted;
     setMuted(next);
     mutedRef.current = next;
-    localStreamRef.current?.getAudioTracks().forEach((t) => {
-      t.enabled = !next;
-    });
+    try {
+      conversationRef.current?.setMicMuted?.(next);
+    } catch {
+      localStreamRef.current?.getAudioTracks().forEach((t) => {
+        t.enabled = !next;
+      });
+    }
   }
 
   const live = connected && phase !== "error" && phase !== "idle";
   const ringScale = 1 + level * 0.55;
   const speakingLabel =
     phase === "speaking" ? `${operatorName} danışır…` : STATUS_LABELS[phase];
+  const engineDisplay =
+    engineLabel === "elevenlabs"
+      ? `ElevenLabs v3${modelLabel ? ` · ${modelLabel}` : ""}`
+      : `${engineLabel}${modelLabel ? ` · ${modelLabel}` : ""}`;
 
   return (
     <div className="callai-page">
@@ -525,11 +451,7 @@ export default function TestCallPage() {
       <header className="callai-topbar">
         <div className="callai-brand-mark">AI Voice OS</div>
         <div className="callai-top-meta">
-          <span className="ok">
-            {engineLabel === "openai"
-              ? `OpenAI Realtime${modelLabel ? ` · ${modelLabel}` : ""}`
-              : `${engineLabel} · hazır`}
-          </span>
+          <span className="ok">{engineDisplay}</span>
           <Link href={`/projects/${pid}`} className="callai-back">
             ← Layihə
           </Link>
@@ -541,7 +463,7 @@ export default function TestCallPage() {
           <p className="callai-brand-hero">CallAI</p>
           <h1>{businessLabel || projectName || "Operator xətti"}</h1>
           <p className="callai-lede">
-            {operatorName} ilə real vaxtda danışın — OpenAI speech-to-speech, aşağı gecikmə,
+            {operatorName} ilə real vaxtda danışın — Bakı azərbaycanlısı kimi təbii səs,
             barge-in aktiv.
           </p>
 
@@ -568,10 +490,7 @@ export default function TestCallPage() {
         <section className="callai-stage" aria-label="Səsli agent">
           <div className="callai-orb-wrap">
             <div className="callai-orb-ring" style={{ transform: `scale(${ringScale})` }} />
-            <div
-              className={`callai-orb ${phase}`}
-              data-live={live ? "true" : "false"}
-            >
+            <div className={`callai-orb ${phase}`} data-live={live ? "true" : "false"}>
               <span className="callai-orb-core" />
             </div>
           </div>
@@ -588,7 +507,7 @@ export default function TestCallPage() {
           <div className="callai-log" ref={logRef}>
             {lines.length === 0 ? (
               <p className="callai-empty">
-                Zəngi başladın. Transkript Realtime STT ilə burada görünəcək.
+                Zəngi başladın. Transkript burada görünəcək.
               </p>
             ) : (
               lines.map((t) => (
@@ -608,7 +527,7 @@ export default function TestCallPage() {
           <div className="callai-log">
             {tools.length === 0 ? (
               <p className="callai-empty">
-                Axtarış və data alətləri burada izlənir. Cavab hədəfi: 1–2 saniyə.
+                Axtarış və data alətləri burada izlənir.
               </p>
             ) : (
               tools.map((t) => (
@@ -627,13 +546,13 @@ export default function TestCallPage() {
           <div className="callai-store-chip">
             <span>{projectName || "Layihə"}</span>
             <span>{businessLabel || "Operator xətti"}</span>
-            <span>{operatorName} · OpenAI Realtime · barge-in</span>
+            <span>{operatorName} · ElevenLabs v3 · barge-in</span>
           </div>
         </div>
       </section>
 
       <footer className="callai-foot">
-        <p>{projectName || "AI Voice OS"} · Azərbaycan dili · OpenAI Realtime</p>
+        <p>{projectName || "AI Voice OS"} · Azərbaycan dili · ElevenLabs v3</p>
       </footer>
     </div>
   );

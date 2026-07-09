@@ -99,13 +99,14 @@ interface VoiceProvider {
 
 Adapters:
 
-- **OpenAI Realtime (default, low latency):** WebRTC speech-to-speech
-  (`OPENAI_REALTIME_MODEL`, default `gpt-realtime-2.1`) + input transcription
-  (`OPENAI_STT_MODEL`) + voices (`marin` / `cedar`). Target 1–2s replies; barge-in.
+- **ElevenLabs v3 (default, native AZ):** Agents + `eleven_v3_conversational`,
+  language `az`, expressive mode, pronunciation dictionaries. Prefer signed
+  WebSocket URL (avoids LiveKit DataChannel drop after greeting).
+- **OpenAI Realtime (optional):** WebRTC speech-to-speech when
+  `VOICE_PROVIDER=openai` (`OPENAI_REALTIME_MODEL`, voices `marin` / `cedar`).
 - **Edge Neural (fallback):** Microsoft neural Banu/Babek via `msedge-tts` when
   `VOICE_PROVIDER=edge_neural`.
 - **Azure Speech (future paid SLA):** same Banu/Babek voices with commercial SLA.
-- **ElevenLabs:** not used (cost / lock-in).
 
 All model IDs are env-driven — upgrade without code changes. See ADR-0003.
 
@@ -146,7 +147,7 @@ See ADR-0005.
 
 ## 9. Open decisions (need confirmation before scaffolding)
 
-1. **Voice default:** OpenAI Realtime (low latency) behind `VoiceProvider`. —
+1. **Voice default:** ElevenLabs v3 Conversational behind `VoiceProvider`. —
    *Accepted (ADR-0003).*
 2. **Telephony:** DIDWW (or equivalent AZ SIP) for +994, behind SIP adapter;
    browser calls for PoC. — *Recommended.*

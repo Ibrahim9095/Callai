@@ -7,14 +7,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 ## [Unreleased]
 
 ### Changed
-- **Mandatory STT/TTS:** `gpt-4o-transcribe` + `gpt-4o-mini-tts` only
-  (legacy `whisper` / `tts-1` refused). Set `OPENAI_API_KEY` in `.env` — no
-  code changes needed to swap keys.
-- **OpenAI Realtime (mandatory default):** Voice Engine now uses OpenAI
-  speech-to-speech via WebRTC (`gpt-realtime-2.1` + `gpt-4o-transcribe` STT).
-  Target reply latency **1–2s**. All model/voice IDs are **env-only**.
-  Barge-in via server VAD `interrupt_response`. Edge Neural kept as
-  `VOICE_PROVIDER=edge_neural` fallback.
+- **ElevenLabs v3 (production default):** Voice Engine uses
+  `eleven_v3_conversational` Agents (language `az`, expressive mode,
+  pronunciation dictionaries). WebSocket signed URL preferred over LiveKit
+  WebRTC. OpenAI Realtime optional via `VOICE_PROVIDER=openai`. Edge Neural
+  remains `VOICE_PROVIDER=edge_neural` fallback.
+- **Native Bakı dialect:** prompts harden pure Azerbaijani (ban Turkish),
+  “never sound like AI”, and v3 audio tags (`[warmly]`, `[friendly]`, …).
+- **Operators Leyla/Samir** map to ElevenLabs voice IDs (Fili / male default).
 - **Admin prompts order:** Salamlama → User Prompt → System Prompt (fixed).
 - **Single Save:** one top «Yadda saxla» persists greeting, prompts, operator,
   phone, speech speed, and voice settings. Temperature / Max Tokens removed from UI.

@@ -1,16 +1,21 @@
 /**
  * Voice provider contracts. The platform is provider-agnostic (ADR-0003).
  *
- * Production default: OpenAI Realtime (speech-to-speech, low latency).
- * Edge Neural / Azure / local_open remain swappable adapters.
- * ElevenLabs is NOT used (cost / lock-in).
+ * Production default: ElevenLabs v3 Conversational (native AZ, expressive).
+ * OpenAI Realtime / Edge Neural remain swappable adapters.
  */
-export const VOICE_PROVIDERS = ["openai", "edge_neural", "azure", "local_open"] as const;
+export const VOICE_PROVIDERS = [
+  "elevenlabs",
+  "openai",
+  "edge_neural",
+  "azure",
+  "local_open",
+] as const;
 export type VoiceProviderId = (typeof VOICE_PROVIDERS)[number];
 
 export interface VoiceOption {
   provider: VoiceProviderId;
-  /** Provider-specific voice identifier (e.g. OpenAI "marin", Edge "az-AZ-BanuNeural"). */
+  /** Provider-specific voice identifier */
   voiceId: string;
   label: string;
   gender: "female" | "male" | "neutral";
@@ -19,9 +24,25 @@ export interface VoiceOption {
 }
 
 /**
- * Curated voice catalog — OpenAI Realtime voices (marin/cedar recommended).
+ * Curated voice catalog — ElevenLabs v3 primary (Leyla/Samir).
  */
 export const VOICE_CATALOG: VoiceOption[] = [
+  {
+    provider: "elevenlabs",
+    voiceId: "FDs1ZX5J4e4f2c2erxtW",
+    label: "Leyla (ElevenLabs v3, qadın) — Fili",
+    gender: "female",
+    language: "az",
+    premium: true,
+  },
+  {
+    provider: "elevenlabs",
+    voiceId: "iP95p4xoKVk53GoZ742B",
+    label: "Samir (ElevenLabs v3, kişi)",
+    gender: "male",
+    language: "az",
+    premium: true,
+  },
   {
     provider: "openai",
     voiceId: "marin",
@@ -57,6 +78,24 @@ export const VOICE_CATALOG: VoiceOption[] = [
 ];
 
 export const DEFAULT_VOICE: VoiceOption = VOICE_CATALOG[0];
+
+/** Resolve ElevenLabs voice id from catalog / gender / env-style aliases. */
+export function resolveElevenLabsVoiceId(opts: {
+  voiceProvider?: string | null;
+  voiceId?: string | null;
+  gender?: "female" | "male" | "unknown" | "neutral";
+}): string {
+  const v = (opts.voiceId || "").trim();
+  if (/^[a-zA-Z0-9]{20,}$/.test(v)) return v;
+  const lower = v.toLowerCase();
+  const wantMale =
+    lower.includes("babek") ||
+    lower.includes("cedar") ||
+    lower.includes("male") ||
+    lower.includes("samir") ||
+    opts.gender === "male";
+  return wantMale ? "iP95p4xoKVk53GoZ742B" : "FDs1ZX5J4e4f2c2erxtW";
+}
 
 /** Resolve OpenAI Realtime voice id from catalog / gender. */
 export function resolveOpenAiCatalogVoiceId(opts: {
@@ -100,19 +139,24 @@ export function resolveNeuralVoiceId(opts: {
   return wantMale ? "az-AZ-BabekNeural" : "az-AZ-BanuNeural";
 }
 
-/** @deprecated */
-export function resolveElevenLabsVoiceId(opts: {
-  voiceProvider?: string | null;
-  voiceId?: string | null;
-  gender?: "female" | "male" | "unknown" | "neutral";
-}): string {
-  return resolveOpenAiCatalogVoiceId(opts);
-}
-
 export function voiceGenderFromCatalog(voiceId?: string | null): "female" | "male" | "unknown" {
   const v = (voiceId || "").toLowerCase();
-  if (v.includes("babek") || v.includes("cedar") || v.includes("male")) return "male";
-  if (v.includes("banu") || v.includes("marin") || v.includes("female")) return "female";
+  if (
+    v.includes("babek") ||
+    v.includes("cedar") ||
+    v.includes("male") ||
+    v === "ip95p4xokvk53goz742b"
+  ) {
+    return "male";
+  }
+  if (
+    v.includes("banu") ||
+    v.includes("marin") ||
+    v.includes("female") ||
+    v === "fds1zx5j4e4f2c2erxtw"
+  ) {
+    return "female";
+  }
   const hit = VOICE_CATALOG.find((c) => c.voiceId === voiceId);
   if (hit?.gender === "male" || hit?.gender === "female") return hit.gender;
   return "unknown";

@@ -14,8 +14,8 @@ export interface OperatorPreset {
   /** Display + spoken name (exact). */
   name: string;
   gender: OperatorGender;
-  /** Default catalog voice for this operator (OpenAI Realtime by default). */
-  voiceProvider: "openai" | "edge_neural" | "azure";
+  /** Default catalog voice for this operator (ElevenLabs v3 by default). */
+  voiceProvider: "elevenlabs" | "openai" | "edge_neural" | "azure";
   voiceId: string;
   label: string;
 }
@@ -23,22 +23,24 @@ export interface OperatorPreset {
 /**
  * Active operator catalog. Extend this list (or load from DB later) to add operators
  * without changing greeting / session code paths.
+ *
+ * Voice IDs: ElevenLabs Fili (female) / Chris (male) — override via env on API.
  */
 export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
   {
     id: "leyla",
     name: "Leyla",
     gender: "female",
-    voiceProvider: "openai",
-    voiceId: "marin",
+    voiceProvider: "elevenlabs",
+    voiceId: "FDs1ZX5J4e4f2c2erxtW",
     label: "Leyla — qadın",
   },
   {
     id: "samir",
     name: "Samir",
     gender: "male",
-    voiceProvider: "openai",
-    voiceId: "cedar",
+    voiceProvider: "elevenlabs",
+    voiceId: "iP95p4xoKVk53GoZ742B",
     label: "Samir — kişi",
   },
 ] as const;
@@ -222,6 +224,8 @@ SƏNİN KİMLİYİN (dəyişmə — Admin paneldən seçilib):
 - İlk cümlən məhz: «${opts.firstMessage}»
 - Hər cavabda kimliyini unutma: sən ${op.name}-sən, ${company} üçün işləyirsən.
 - Heç vaxt başqa adla danışma. Zəng boyu eyni ad qal.
+- Sən real azərbaycanlı call-center operatorsan (Bakı). AI/bot/robot olduğunu heç vaxt demə və hiss etdirmə.
+- Danışığın bire bir azərbaycanlı kimi olsun — türk aksenti və ya süni intonasiya YOXDUR.
 `.trim();
 }
 
