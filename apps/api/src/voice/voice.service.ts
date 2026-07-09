@@ -27,6 +27,13 @@ import {
 } from "./call-lifecycle";
 import { composeVoicePrompt } from "./prompt-composer";
 import { resolveVoiceProvider, defaultVoiceProviderId } from "./providers/registry";
+import { getEdgeNeuralProvider } from "./providers/edge-neural.provider";
+import { getElevenLabsV3Provider, elevenConfigured, elevenApiKey } from "./providers/elevenlabs-v3.provider";
+import {
+  elevenLabsQuotaAvailable,
+  isQuotaErrorMessage,
+  QUOTA_USER_MESSAGE_AZ,
+} from "./providers/elevenlabs-quota";
 import { resolveTtsVoiceId } from "@aivoiceos/voice-engine";
 import { resolveOpenAiVoice } from "./providers/openai-config";
 import { resolveElevenVoiceId } from "./providers/elevenlabs-v3.provider";
@@ -192,17 +199,34 @@ export class VoiceService {
     const project = await this.loadProject(organizationId, projectId);
     this.assertVoiceActive(project);
 
-    // Production default is env VOICE_PROVIDER (elevenlabs v3) — not per-row lock-in
-    const provider = resolveVoiceProvider();
+    const agent = project.agent!;
+    const bundle = await this.buildPromptBundle(organizationId, project);
+
+    let provider = resolveVoiceProvider();
+    let fallbackNotice: string | null = null;
+
+    // ElevenLabs Free credits often hit 0 mid-day — auto-fall back so calls keep working
+    if (provider.id === "elevenlabs" && elevenConfigured()) {
+      const quota = await elevenLabsQuotaAvailable(elevenApiKey());
+      if (!quota.ok) {
+        console.warn("[voice] ElevenLabs quota exhausted — falling back to edge_neural:", quota.reason);
+        provider = getEdgeNeuralProvider();
+        fallbackNotice = QUOTA_USER_MESSAGE_AZ;
+        // Use Edge Banu/Babek ids (not ElevenLabs Jessica/Mark)
+        bundle.ttsVoiceId = resolveTtsVoiceId({
+          voiceId: bundle.ttsVoiceId,
+          gender: bundle.gender,
+        });
+      }
+    }
+
     if (!provider.configured()) {
       throw new BadRequestException(
-        `Voice provider (${provider.id}) konfiqurasiya olunmayıb. ELEVENLABS_API_KEY yoxlayın.`,
+        `Voice provider (${provider.id}) konfiqurasiya olunmayıb.`,
       );
     }
 
-    const agent = project.agent!;
-    const bundle = await this.buildPromptBundle(organizationId, project);
-    const engineId = defaultVoiceProviderId();
+    const engineId = provider.id;
 
     // Reuse cached ElevenLabs agent id when still on same engine+voice+persona
     const canReuseExternal =
@@ -238,7 +262,6 @@ export class VoiceService {
       });
     }
 
-    // Always re-sync ElevenLabs agent so KB catalog + ASR keywords stay fresh
     const session = await provider.issueClientSession({
       projectId: project.id,
       projectName: project.name,
@@ -252,11 +275,9 @@ export class VoiceService {
       temperature: bundle.temperature,
       maxTokens: bundle.maxTokens,
       keywords: bundle.asrKeywords,
-      // Force patch/recreate so prompt+tools+ASR keywords update every dial
       cachedExternalId: canReuseExternal ? agent.externalAgentId : null,
     });
 
-    // Persist ElevenLabs agent id for faster subsequent syncs
     if (
       session.externalAgentId &&
       (session.externalAgentId !== agent.externalAgentId || needsMetaSync)
@@ -278,7 +299,6 @@ export class VoiceService {
       connectionType: session.transport,
       signedUrl: session.signedUrl,
       token: session.token,
-      /** Ephemeral key (OpenAI) or conversation token (ElevenLabs WebRTC fallback) */
       value: session.token,
       client_secret: session.token ? { value: session.token } : undefined,
       agent_id: session.externalAgentId,
@@ -295,14 +315,16 @@ export class VoiceService {
       userPrompt: bundle.userInstruction,
       projectStatus: project.status,
       tools: [...AGENT_TOOL_NAMES],
-      engine: session.provider || defaultVoiceProviderId(),
-      model: session.model,
-      sttModel: session.sttModel,
+      engine: session.provider || engineId,
+      model: session.model || (engineId === "edge_neural" ? "edge-banu" : undefined),
+      sttModel: session.sttModel || (engineId === "edge_neural" ? "web-speech-az" : undefined),
       expiresAt: session.expiresAt,
+      fallbackNotice,
+      warning: fallbackNotice,
     };
   }
 
-  /** Synthesize greeting / arbitrary text (free Edge neural TTS). */
+  /** Synthesize greeting / arbitrary text — Edge fallback if ElevenLabs quota is dead. */
   async speak(
     organizationId: string,
     projectId: string,
@@ -311,9 +333,29 @@ export class VoiceService {
     const project = await this.loadProject(organizationId, projectId);
     this.assertVoiceActive(project);
     const bundle = await this.buildPromptBundle(organizationId, project);
-    const provider = resolveVoiceProvider();
     const text = String(body?.text || bundle.firstMessage).trim();
     if (!text) throw new BadRequestException("Boş mətn");
+
+    let provider = resolveVoiceProvider();
+    // Prefer Edge for speak when ElevenLabs is the configured provider but out of credits
+    if (provider.id === "elevenlabs") {
+      try {
+        return await getElevenLabsV3Provider().speak({
+          text,
+          voiceId: bundle.ttsVoiceId,
+          rate: bundle.ttsRate,
+        });
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (isQuotaErrorMessage(msg)) {
+          console.warn("[voice.speak] ElevenLabs quota — Edge fallback");
+          provider = getEdgeNeuralProvider();
+        } else {
+          throw e;
+        }
+      }
+    }
+
     return provider.speak({
       text,
       voiceId: bundle.ttsVoiceId,
@@ -321,7 +363,7 @@ export class VoiceService {
     });
   }
 
-  /** One conversation turn: STT text in → LLM + TTS out. */
+  /** One conversation turn: STT text in → LLM + TTS out (Edge path + tools). */
   async turn(
     organizationId: string,
     projectId: string,
@@ -336,12 +378,14 @@ export class VoiceService {
     if (!userText) throw new BadRequestException("userText tələb olunur");
 
     const bundle = await this.buildPromptBundle(organizationId, project);
-    const provider = resolveVoiceProvider();
+    // Always use Edge for turn pipeline (ElevenLabs Agents don't use this endpoint)
+    const provider = getEdgeNeuralProvider();
     if (!provider.turn) {
       throw new BadRequestException("Bu voice provider turn dəstəkləmir");
     }
 
-    return provider.turn({
+    // Tool-aware turn: let LLM call search/create when needed
+    return this.turnWithTools(organizationId, projectId, {
       systemPrompt: bundle.fullPrompt,
       history: body.history || [],
       userText,
@@ -350,6 +394,172 @@ export class VoiceService {
       maxTokens: bundle.maxTokens,
       rate: bundle.ttsRate,
     });
+  }
+
+  /**
+   * Edge pipeline turn with OpenAI function-calling so rezerv/search still work
+   * when ElevenLabs Agents are unavailable (quota).
+   */
+  private async turnWithTools(
+    organizationId: string,
+    projectId: string,
+    req: {
+      systemPrompt: string;
+      history: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+      userText: string;
+      voiceId?: string;
+      temperature?: number;
+      maxTokens?: number;
+      rate?: string;
+    },
+  ) {
+    const openaiKey = process.env.OPENAI_API_KEY || "";
+    if (!openaiKey) {
+      throw new BadRequestException(
+        "Dialoq üçün OPENAI_API_KEY lazımdır (ElevenLabs kredit bitib — ehtiyat rejim).",
+      );
+    }
+
+    const { AGENT_TOOLS } = await import("./agent-tools");
+    const openAiTools = AGENT_TOOLS.map((t) => ({
+      type: "function" as const,
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters || { type: "object", properties: {} },
+      },
+    }));
+
+    const messages: Array<Record<string, unknown>> = [
+      { role: "system", content: req.systemPrompt },
+      ...req.history
+        .filter((h) => h.role === "user" || h.role === "assistant")
+        .slice(-12)
+        .map((h) => ({ role: h.role, content: h.content })),
+      { role: "user", content: req.userText },
+    ];
+
+    const model = process.env.VOICE_LLM_MODEL || process.env.OPENAI_CHAT_MODEL || "gpt-4o-mini";
+    const maxTokens = req.maxTokens && req.maxTokens > 0 ? Math.min(req.maxTokens, 280) : 180;
+    const temperature =
+      typeof req.temperature === "number" ? Math.min(1, Math.max(0, req.temperature)) : 0.4;
+
+    let replyText = "";
+    // Up to 3 tool rounds
+    for (let round = 0; round < 3; round++) {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${openaiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          temperature,
+          max_tokens: maxTokens,
+          messages,
+          tools: openAiTools,
+          tool_choice: "auto",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new BadRequestException(data?.error?.message || `LLM xətası (${res.status})`);
+      }
+      const msg = data?.choices?.[0]?.message;
+      if (!msg) throw new BadRequestException("LLM boş cavab qaytardı");
+
+      const toolCalls = msg.tool_calls as
+        | Array<{ id: string; function: { name: string; arguments: string } }>
+        | undefined;
+
+      if (toolCalls?.length) {
+        messages.push(msg);
+        for (const tc of toolCalls) {
+          let args: Record<string, unknown> = {};
+          try {
+            args = JSON.parse(tc.function.arguments || "{}");
+          } catch {
+            args = {};
+          }
+          const result = await this.runTool(organizationId, projectId, tc.function.name, args);
+          messages.push({
+            role: "tool",
+            tool_call_id: tc.id,
+            content: typeof result === "string" ? result : JSON.stringify(result),
+          });
+        }
+        continue;
+      }
+
+      replyText = String(msg.content || "")
+        .trim()
+        .replace(/\s+/g, " ");
+
+      // If model only said the filler without tools, force a search then answer
+      const fillerOnly =
+        !toolCalls?.length &&
+        /bir saniy[eə]|zəhmət olmasa|yoxlayıram/i.test(replyText) &&
+        replyText.length < 80;
+      if (fillerOnly && round < 2) {
+        messages.push(msg);
+        messages.push({
+          role: "user",
+          content:
+            "İndi search_records alətini çağır (query: istifadəçinin sualı) və nəticəyə əsasən qısa cavab ver. Yalnız filler demə.",
+        });
+        continue;
+      }
+      break;
+    }
+
+    if (!replyText || /^bir saniy/i.test(replyText)) {
+      // Last-resort: search ourselves then ask LLM to speak from results
+      const search = await this.knowledge.agentSearch(organizationId, projectId, {
+        query: req.userText,
+        limit: 10,
+      });
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${openaiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          temperature,
+          max_tokens: maxTokens,
+          messages: [
+            { role: "system", content: req.systemPrompt },
+            {
+              role: "user",
+              content: `Müştəri sualı: ${req.userText}\n\nCədvəl nəticəsi (JSON):\n${JSON.stringify(search).slice(0, 3500)}\n\nBuna əsasən qısa Azərbaycan cavabı ver. Uydurma demə.`,
+            },
+          ],
+        }),
+      });
+      const data = await res.json();
+      replyText = String(data?.choices?.[0]?.message?.content || "")
+        .trim()
+        .replace(/\s+/g, " ");
+    }
+
+    if (!replyText) {
+      replyText = "Bir saniyə, zəhmət olmasa. Yenidən deyə bilərsiniz?";
+    }
+
+    const spoken = await getEdgeNeuralProvider().speak({
+      text: replyText,
+      voiceId: req.voiceId,
+      rate: req.rate || "+15%",
+    });
+
+    return {
+      replyText,
+      audioBase64: spoken.audioBase64,
+      mimeType: spoken.mimeType,
+      provider: "edge_neural",
+    };
   }
 
   async runTool(
