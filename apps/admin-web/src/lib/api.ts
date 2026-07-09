@@ -69,24 +69,34 @@ export const api = {
     request<any>(`/projects/${id}/phone`, { method: "PATCH", body: JSON.stringify({ number }) }),
   removePhone: (id: string) => request<any>(`/projects/${id}/phone`, { method: "DELETE" }),
 
-  // Knowledge / data
+  // Knowledge / data (file-driven)
+  files: (pid: string) => request<any[]>(`/projects/${pid}/files`),
+  deleteFile: (pid: string, fid: string) =>
+    request<any[]>(`/projects/${pid}/files/${fid}`, { method: "DELETE" }),
+  uploadFile: async (pid: string, file: File) => {
+    const token = getToken();
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch(`/api/projects/${pid}/files`, {
+      method: "POST",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: fd,
+    });
+    if (res.status === 401 && typeof window !== "undefined") {
+      clearToken();
+      window.location.href = "/login";
+    }
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : null;
+    if (!res.ok) {
+      const m = data?.message || `Xəta (${res.status})`;
+      throw new ApiError(res.status, Array.isArray(m) ? m.join(", ") : m);
+    }
+    return data;
+  },
   collections: (pid: string) => request<any[]>(`/projects/${pid}/collections`),
   records: (pid: string, cid: string) =>
     request<{ collection: any; records: any[] }>(`/projects/${pid}/collections/${cid}/records`),
-  createRecord: (pid: string, cid: string, data: Record<string, unknown>) =>
-    request<any>(`/projects/${pid}/collections/${cid}/records`, {
-      method: "POST",
-      body: JSON.stringify({ data }),
-    }),
-  deleteRecord: (pid: string, cid: string, rid: string) =>
-    request<{ ok: boolean }>(`/projects/${pid}/collections/${cid}/records/${rid}`, {
-      method: "DELETE",
-    }),
-  importCsv: (pid: string, cid: string, csv: string) =>
-    request<{ ok: boolean; imported: number }>(`/projects/${pid}/collections/${cid}/import`, {
-      method: "POST",
-      body: JSON.stringify({ csv }),
-    }),
 
   updateAgent: (id: string, data: Record<string, unknown>) =>
     request<any>(`/projects/${id}/agent`, { method: "PATCH", body: JSON.stringify(data) }),

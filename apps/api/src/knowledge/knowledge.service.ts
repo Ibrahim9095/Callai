@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { coerceFieldValue, type FieldDef } from "@aivoiceos/shared";
 import { parseCsv } from "./csv";
+import { parseWorkbook, slugKey } from "./parse-file";
 import { CreateCollectionDto } from "./dto/knowledge.dto";
 
 /**
@@ -37,6 +38,94 @@ export class KnowledgeService {
         include: { _count: { select: { records: true } } },
       }),
     );
+  }
+
+  listFiles(organizationId: string, projectId: string) {
+    return this.assertProject(organizationId, projectId).then(() =>
+      this.prisma.dataFile.findMany({
+        where: { projectId },
+        orderBy: { createdAt: "desc" },
+        include: { collections: { select: { id: true, name: true, label: true } } },
+      }),
+    );
+  }
+
+  /**
+   * Upload & parse an Excel/CSV file. Each sheet becomes a Collection; rows
+   * become records with inferred field types. Multiple files per project are
+   * supported; the agent reads across all of them.
+   */
+  async uploadFile(
+    organizationId: string,
+    projectId: string,
+    filename: string,
+    buffer: Buffer,
+  ) {
+    await this.assertProject(organizationId, projectId);
+    if (!buffer || buffer.length === 0) throw new BadRequestException("Boş fayl");
+
+    let parsed;
+    try {
+      parsed = parseWorkbook(buffer, filename);
+    } catch {
+      throw new BadRequestException("Fayl oxunmadı. Excel (.xlsx/.xls) və ya CSV yükləyin.");
+    }
+    if (parsed.sheets.length === 0) {
+      throw new BadRequestException("Faylda oxunacaq cədvəl (başlıq + sətir) tapılmadı");
+    }
+
+    const existing = await this.prisma.collection.findMany({
+      where: { projectId },
+      select: { name: true },
+    });
+    const usedNames = new Set(existing.map((c) => c.name));
+
+    const file = await this.prisma.dataFile.create({
+      data: {
+        projectId,
+        filename,
+        kind: parsed.kind,
+        sheetCount: parsed.sheets.length,
+        rowCount: parsed.sheets.reduce((sum, s) => sum + s.rows.length, 0),
+      },
+    });
+
+    for (const sheet of parsed.sheets) {
+      let name = slugKey(sheet.sheetName);
+      let n = 2;
+      while (usedNames.has(name)) name = `${slugKey(sheet.sheetName)}_${n++}`;
+      usedNames.add(name);
+
+      const collection = await this.prisma.collection.create({
+        data: {
+          projectId,
+          fileId: file.id,
+          name,
+          label: sheet.sheetName,
+          fields: sheet.fields as object,
+        },
+      });
+
+      if (sheet.rows.length > 0) {
+        await this.prisma.collectionRecord.createMany({
+          data: sheet.rows.map((data) => ({
+            collectionId: collection.id,
+            projectId,
+            data: data as object,
+          })),
+        });
+      }
+    }
+
+    return this.listFiles(organizationId, projectId);
+  }
+
+  async deleteFile(organizationId: string, projectId: string, fileId: string) {
+    await this.assertProject(organizationId, projectId);
+    const file = await this.prisma.dataFile.findFirst({ where: { id: fileId, projectId } });
+    if (!file) throw new NotFoundException("Fayl tapılmadı");
+    await this.prisma.dataFile.delete({ where: { id: fileId } }); // cascades collections + records
+    return { ok: true };
   }
 
   async createCollection(organizationId: string, projectId: string, dto: CreateCollectionDto) {

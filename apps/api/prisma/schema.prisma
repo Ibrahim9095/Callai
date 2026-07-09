@@ -64,22 +64,42 @@ model Project {
   agent            Agent?
   phoneNumber      PhoneNumber?
   collections      Collection[]
+  dataFiles        DataFile[]
 
   @@index([organizationId])
+}
+
+// An uploaded source file (Excel/CSV). One file may contain multiple sheets;
+// each sheet becomes a Collection. The agent reads all of a project's data.
+model DataFile {
+  id          String       @id @default(cuid())
+  projectId   String
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  filename    String
+  kind        String // xlsx | xls | csv
+  sheetCount  Int          @default(0)
+  rowCount    Int          @default(0)
+  createdAt   DateTime     @default(now())
+  collections Collection[]
+
+  @@index([projectId])
 }
 
 model Collection {
   id        String             @id @default(cuid())
   projectId String
   project   Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  fileId    String?
+  file      DataFile?          @relation(fields: [fileId], references: [id], onDelete: Cascade)
   name      String // machine key, e.g. "rooms"
-  label     String
+  label     String // sheet name / human label
   fields    Json // FieldDef[]
   createdAt DateTime           @default(now())
   records   CollectionRecord[]
 
   @@unique([projectId, name])
   @@index([projectId])
+  @@index([fileId])
 }
 
 model CollectionRecord {

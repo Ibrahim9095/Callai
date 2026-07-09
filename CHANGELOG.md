@@ -15,13 +15,19 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
   E.164 normalization and operator detection (Azercell/Bakcell/Nar/landline).
   Adds `PhoneNumber` model + `@aivoiceos/shared` phone helpers. Status is
   `pending` until live SIP routing is provisioned (ADR-0004).
-- **Knowledge base / per-project data** (structured, read+write): generic
-  `Collection` + `CollectionRecord` models (flexible JSON), scoped per project.
-  Business templates seed default collections (hotel → rooms + reservations,
-  clinic → services + appointments, shop → products + orders, …; generic for
-  custom businesses). API CRUD for collections/records + CSV import with type
-  coercion. Admin data page to add/edit/delete rows and import CSV. The AI
-  agent will read/write this data live during calls (wired in the voice step).
+- **Knowledge base / per-project data (file-driven)**: upload Excel/CSV files
+  ("+ Fayl əlavə et") — any number of files, multi-sheet workbooks supported.
+  Each sheet is parsed into a `Collection` with inferred field types; rows
+  become records. Files are managed (list/delete, cascade) and previewed. The
+  AI agent reads across all of a project's files (query tools wired in the
+  voice step). Models: `DataFile` + `Collection` + `CollectionRecord`.
+- Agent prompt rules tightened: short human-like replies, immediate turn-taking,
+  a brief "Bir saniyə, zəhmət olmasa" filler while looking data up, and strict
+  "no fabrication — read only from uploaded files" behavior.
+
+### Changed
+- Knowledge is now **file-driven** (upload Excel/CSV) instead of manual row
+  entry / CSV paste, and projects no longer auto-seed empty collections.
 
 ### Notes
 - Provider decisions ADR-0003 (voice: Azure default + ElevenLabs premium) and
