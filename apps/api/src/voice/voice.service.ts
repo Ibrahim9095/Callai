@@ -7,7 +7,6 @@ import {
 import {
   buildCallGreeting,
   buildIdentityPrompt,
-  extractPersonaName,
   getBusinessTemplate,
   resolveOperator,
 } from "@aivoiceos/shared";
@@ -15,15 +14,12 @@ import { PrismaService } from "../prisma/prisma.service";
 import { KnowledgeService } from "../knowledge/knowledge.service";
 import { AGENT_TOOL_NAMES, type AgentToolName } from "./agent-tools";
 import {
-  elevenConfigured,
-  ensureProjectElevenAgent,
-  getElevenSignedUrl,
-} from "./elevenlabs.adapter";
-import {
   inactiveProjectMessage,
   isProjectVoiceActive,
 } from "./call-lifecycle";
 import { composeVoicePrompt } from "./prompt-composer";
+import { resolveVoiceProvider, defaultVoiceProviderId } from "./providers/registry";
+import { resolveTtsVoiceId } from "@aivoiceos/voice-engine";
 
 @Injectable()
 export class VoiceService {
@@ -42,7 +38,6 @@ export class VoiceService {
     return project;
   }
 
-  /** Voice Engine gate — inactive projects never start ASR / WebRTC / tools. */
   private assertVoiceActive(project: { status: string; name: string }) {
     if (!isProjectVoiceActive(project.status)) {
       throw new ForbiddenException(inactiveProjectMessage(project.status));
@@ -57,35 +52,31 @@ export class VoiceService {
     return getBusinessTemplate(project.businessTemplate)?.label || project.businessTemplate;
   }
 
-  async createSession(organizationId: string, projectId: string) {
-    const project = await this.loadProject(organizationId, projectId);
-    this.assertVoiceActive(project);
-
-    if (!elevenConfigured()) {
-      throw new BadRequestException(
-        "Səs API açarı yoxdur. Serverə ELEVENLABS_API_KEY əlavə edin.",
-      );
-    }
-
+  private buildPromptBundle(project: {
+    id: string;
+    name: string;
+    businessTemplate: string;
+    businessLabel: string | null;
+    agent: {
+      persona: string;
+      prompt: string;
+      userPrompt?: string | null;
+      greeting?: string | null;
+      voiceId: string;
+      temperature?: number | null;
+      maxTokens?: number | null;
+    };
+  }) {
     const agent = project.agent!;
     const businessLabel = this.businessLabelOf(project);
     const operator = resolveOperator(agent.persona);
     const persona = operator.name;
     const gender = operator.gender;
     const companyName = (project.name || businessLabel || "").trim();
-
-    if ((agent.persona || "").trim() !== persona) {
-      await this.prisma.agent.update({
-        where: { projectId },
-        data: {
-          persona,
-          voiceProvider: operator.voiceProvider,
-          voiceId: operator.voiceId,
-          externalAgentId: null,
-          greeting: null,
-        },
-      });
-    }
+    const ttsVoiceId = resolveTtsVoiceId({
+      voiceId: agent.voiceId || operator.voiceId,
+      gender,
+    });
 
     let greeting = (agent.greeting || "").trim() || null;
     if (
@@ -94,17 +85,13 @@ export class VoiceService {
         (companyName && !greeting.toLowerCase().includes(companyName.toLowerCase().slice(0, 6))))
     ) {
       greeting = null;
-      await this.prisma.agent.update({
-        where: { projectId },
-        data: { greeting: null },
-      });
     }
 
     const firstMessage = buildCallGreeting({
       persona,
       businessLabel,
       templateId: project.businessTemplate,
-      voiceId: operator.voiceId,
+      voiceId: ttsVoiceId,
       customGreeting: greeting,
       projectName: project.name,
       companyName,
@@ -114,7 +101,7 @@ export class VoiceService {
       persona,
       businessLabel,
       templateId: project.businessTemplate,
-      voiceId: operator.voiceId,
+      voiceId: ttsVoiceId,
       projectName: project.name,
       companyName,
       firstMessage,
@@ -123,63 +110,147 @@ export class VoiceService {
     const { fullPrompt, userInstruction } = composeVoicePrompt({
       identityBlock: identity,
       systemPrompt: agent.prompt || "",
-      userPrompt: (agent as any).userPrompt || "",
+      userPrompt: agent.userPrompt || "",
       persona,
       companyName,
     });
 
-    // Always PATCH with built_in_tools.end_call:null so cached agents cannot hang up.
-    const { agent_id, recreated } = await ensureProjectElevenAgent({
-      projectId: project.id,
-      projectName: project.name,
+    return {
+      operator,
       persona,
-      prompt: fullPrompt,
-      firstMessage,
-      language: agent.language || "az",
-      keywords: [
-        persona,
-        extractPersonaName(persona),
-        project.name,
-        businessLabel,
-        companyName,
-      ].filter(Boolean) as string[],
-      cachedAgentId: agent.externalAgentId,
-      forceRecreate: agent.externalAgentId == null,
-      catalogVoiceId: operator.voiceId,
-      voiceProvider: operator.voiceProvider,
       gender,
-      temperature: (agent as any).temperature ?? 0.45,
-      maxTokens: (agent as any).maxTokens ?? null,
-    });
+      companyName,
+      businessLabel,
+      ttsVoiceId,
+      firstMessage,
+      fullPrompt,
+      userInstruction,
+      temperature: agent.temperature ?? 0.45,
+      maxTokens: agent.maxTokens ?? null,
+    };
+  }
 
-    if (agent.externalAgentId !== agent_id || recreated) {
+  async createSession(organizationId: string, projectId: string) {
+    const project = await this.loadProject(organizationId, projectId);
+    this.assertVoiceActive(project);
+
+    const provider = resolveVoiceProvider(project.agent?.voiceProvider);
+    if (!provider.configured()) {
+      throw new BadRequestException(
+        `Voice provider (${provider.id}) konfiqurasiya olunmayıb.`,
+      );
+    }
+
+    const agent = project.agent!;
+    const bundle = this.buildPromptBundle(project);
+
+    // Normalize persona to catalog (Leyla/Samir) if needed
+    if ((agent.persona || "").trim() !== bundle.persona) {
       await this.prisma.agent.update({
         where: { projectId },
-        data: { externalAgentId: agent_id },
+        data: {
+          persona: bundle.persona,
+          voiceProvider: defaultVoiceProviderId(),
+          voiceId: bundle.ttsVoiceId,
+          externalAgentId: null,
+          greeting: null,
+        },
       });
     }
 
-    // Production transport: WebSocket signed URL (not LiveKit WebRTC).
-    // WebRTC DataChannels abort when the agent participant leaves the room
-    // right after first_message — that killed the call after greeting.
-    const { signedUrl } = await getElevenSignedUrl(agent_id);
-    return {
-      provider: "elevenlabs" as const,
-      connectionType: "websocket" as const,
-      signedUrl,
-      agent_id,
+    const session = await provider.issueClientSession({
       projectId: project.id,
       projectName: project.name,
-      businessLabel,
-      companyName,
-      operatorId: operator.id,
-      operatorName: persona,
-      operatorGender: gender,
-      firstMessage,
-      userPrompt: userInstruction,
+      persona: bundle.persona,
+      gender: bundle.gender,
+      language: agent.language || "az",
+      systemPrompt: bundle.fullPrompt,
+      firstMessage: bundle.firstMessage,
+      voiceId: bundle.ttsVoiceId,
+      voiceProvider: agent.voiceProvider,
+      temperature: bundle.temperature,
+      maxTokens: bundle.maxTokens,
+      cachedExternalId: agent.externalAgentId,
+    });
+
+    // Clear any stale ElevenLabs remote agent id — we no longer use it
+    if (agent.externalAgentId) {
+      await this.prisma.agent.update({
+        where: { projectId },
+        data: { externalAgentId: null },
+      });
+    }
+
+    return {
+      provider: session.provider,
+      transport: session.transport,
+      connectionType: session.transport,
+      signedUrl: session.signedUrl,
+      token: session.token,
+      agent_id: session.externalAgentId,
+      projectId: project.id,
+      projectName: project.name,
+      businessLabel: bundle.businessLabel,
+      companyName: bundle.companyName,
+      operatorId: bundle.operator.id,
+      operatorName: bundle.persona,
+      operatorGender: bundle.gender,
+      firstMessage: bundle.firstMessage,
+      ttsVoiceId: session.ttsVoiceId,
+      userPrompt: bundle.userInstruction,
       projectStatus: project.status,
       tools: [...AGENT_TOOL_NAMES],
+      engine: defaultVoiceProviderId(),
     };
+  }
+
+  /** Synthesize greeting / arbitrary text (free Edge neural TTS). */
+  async speak(
+    organizationId: string,
+    projectId: string,
+    body: { text?: string },
+  ) {
+    const project = await this.loadProject(organizationId, projectId);
+    this.assertVoiceActive(project);
+    const bundle = this.buildPromptBundle(project);
+    const provider = resolveVoiceProvider(project.agent?.voiceProvider);
+    const text = String(body?.text || bundle.firstMessage).trim();
+    if (!text) throw new BadRequestException("Boş mətn");
+    return provider.speak({
+      text,
+      voiceId: bundle.ttsVoiceId,
+      rate: "+10%",
+    });
+  }
+
+  /** One conversation turn: STT text in → LLM + TTS out. */
+  async turn(
+    organizationId: string,
+    projectId: string,
+    body: {
+      userText?: string;
+      history?: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+    },
+  ) {
+    const project = await this.loadProject(organizationId, projectId);
+    this.assertVoiceActive(project);
+    const userText = String(body?.userText || "").trim();
+    if (!userText) throw new BadRequestException("userText tələb olunur");
+
+    const bundle = this.buildPromptBundle(project);
+    const provider = resolveVoiceProvider(project.agent?.voiceProvider);
+    if (!provider.turn) {
+      throw new BadRequestException("Bu voice provider turn dəstəkləmir");
+    }
+
+    return provider.turn({
+      systemPrompt: bundle.fullPrompt,
+      history: body.history || [],
+      userText,
+      voiceId: bundle.ttsVoiceId,
+      temperature: bundle.temperature,
+      maxTokens: bundle.maxTokens,
+    });
   }
 
   async runTool(

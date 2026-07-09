@@ -1,13 +1,16 @@
 /**
- * Voice provider contracts. The platform is provider-agnostic (ADR-0003):
- * Azure (native az-AZ, affordable) is default; ElevenLabs is premium; OpenAI is fallback.
+ * Voice provider contracts. The platform is provider-agnostic (ADR-0003).
+ *
+ * Production default: Edge Neural (free Microsoft neural az-AZ Banu/Babek)
+ * via the VoiceProvider port. Azure Speech (paid SLA) and local open models
+ * plug in as adapters. ElevenLabs is NOT used (cost / lock-in).
  */
-export const VOICE_PROVIDERS = ["azure", "elevenlabs", "openai"] as const;
+export const VOICE_PROVIDERS = ["azure", "edge_neural", "openai", "local_open"] as const;
 export type VoiceProviderId = (typeof VOICE_PROVIDERS)[number];
 
 export interface VoiceOption {
   provider: VoiceProviderId;
-  /** Provider-specific voice identifier (e.g. Azure "az-AZ-BanuNeural"). */
+  /** Provider-specific voice identifier (e.g. Azure/Edge "az-AZ-BanuNeural"). */
   voiceId: string;
   label: string;
   gender: "female" | "male" | "neutral";
@@ -16,73 +19,51 @@ export interface VoiceOption {
 }
 
 /**
- * Curated default voice catalog. Extensible: new voices/providers are added
- * here or fetched live from a provider adapter later.
- *
- * Live browser calls currently use ElevenLabs Conversational (az). Azure IDs
- * are kept for future Azure Speech adapter; picking Azure in the panel maps
- * to the matching ElevenLabs gender voice until Azure live is wired.
+ * Curated voice catalog — native Azerbaijani neural voices.
+ * Live calls use Edge Neural (same Banu/Babek voices, $0 TTS).
  */
 export const VOICE_CATALOG: VoiceOption[] = [
   {
-    provider: "azure",
+    provider: "edge_neural",
     voiceId: "az-AZ-BanuNeural",
-    label: "Banu (Azərbaycan, qadın)",
+    label: "Banu (Azərbaycan, qadın) — pulsuz neural",
     gender: "female",
     language: "az-AZ",
     premium: false,
   },
   {
-    provider: "azure",
+    provider: "edge_neural",
     voiceId: "az-AZ-BabekNeural",
-    label: "Babək (Azərbaycan, kişi)",
+    label: "Babək (Azərbaycan, kişi) — pulsuz neural",
     gender: "male",
     language: "az-AZ",
     premium: false,
-  },
-  {
-    provider: "elevenlabs",
-    voiceId: "elevenlabs-female",
-    label: "ElevenLabs — qadın (premium)",
-    gender: "female",
-    language: "az",
-    premium: true,
-  },
-  {
-    provider: "elevenlabs",
-    voiceId: "elevenlabs-male",
-    label: "ElevenLabs — kişi (premium)",
-    gender: "male",
-    language: "az",
-    premium: true,
   },
 ];
 
 export const DEFAULT_VOICE: VoiceOption = VOICE_CATALOG[0];
 
-/** Resolve the live ElevenLabs TTS voice id for a catalog selection + gender. */
+/** Resolve neural TTS voice id (Banu / Babek) from catalog selection + gender. */
+export function resolveNeuralVoiceId(opts: {
+  voiceProvider?: string | null;
+  voiceId?: string | null;
+  gender?: "female" | "male" | "unknown" | "neutral";
+}): string {
+  const catalogId = (opts.voiceId || "").toLowerCase();
+  const wantMale =
+    catalogId.includes("babek") ||
+    catalogId.includes("male") ||
+    opts.gender === "male";
+  return wantMale ? "az-AZ-BabekNeural" : "az-AZ-BanuNeural";
+}
+
+/** @deprecated Use resolveNeuralVoiceId — ElevenLabs removed from default path. */
 export function resolveElevenLabsVoiceId(opts: {
   voiceProvider?: string | null;
   voiceId?: string | null;
   gender?: "female" | "male" | "unknown" | "neutral";
 }): string {
-  const female =
-    (typeof process !== "undefined" &&
-      (process.env.ELEVENLABS_VOICE_ID_FEMALE || process.env.ELEVENLABS_VOICE_ID)) ||
-    "FDs1ZX5J4e4f2c2erxtW";
-  // Chris — male conversational (works with multilingual / az pipeline)
-  const male =
-    (typeof process !== "undefined" && process.env.ELEVENLABS_VOICE_ID_MALE) ||
-    "iP95p4xoKVk53GoZ742B";
-
-  const catalogId = (opts.voiceId || "").toLowerCase();
-  const wantMale =
-    catalogId.includes("babek") ||
-    catalogId.includes("male") ||
-    catalogId === "elevenlabs-male" ||
-    opts.gender === "male";
-
-  return wantMale ? male : female;
+  return resolveNeuralVoiceId(opts);
 }
 
 export function voiceGenderFromCatalog(voiceId?: string | null): "female" | "male" | "unknown" {

@@ -9,7 +9,8 @@
     "declaration": false,
     "strictPropertyInitialization": false,
     "paths": {
-      "@aivoiceos/shared": ["../../packages/shared/src/index.ts"]
+      "@aivoiceos/shared": ["../../packages/shared/src/index.ts"],
+      "@aivoiceos/voice-engine": ["../../packages/voice-engine/src/index.ts"]
     }
   },
   "include": ["src/**/*", "prisma/**/*"]

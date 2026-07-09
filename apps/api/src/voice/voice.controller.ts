@@ -10,14 +10,40 @@ import { VoiceService } from "./voice.service";
 export class VoiceController {
   constructor(private readonly voice: VoiceService) {}
 
-  /** Browser voice test-call session (ElevenLabs WebSocket signed URL + tools). */
+  /** Browser voice session (provider-agnostic credentials). */
   @MinRole("editor")
   @Post("session")
   createSession(@CurrentUser() user: RequestUser, @Param("projectId") projectId: string) {
     return this.voice.createSession(user.organizationId, projectId);
   }
 
-  /** Execute a knowledge tool during a live call (client-tool callback). */
+  /** Free neural TTS for greeting / arbitrary text. */
+  @MinRole("editor")
+  @Post("speak")
+  speak(
+    @CurrentUser() user: RequestUser,
+    @Param("projectId") projectId: string,
+    @Body() body: { text?: string },
+  ) {
+    return this.voice.speak(user.organizationId, projectId, body || {});
+  }
+
+  /** Conversational turn: user text → LLM reply + TTS audio. */
+  @MinRole("editor")
+  @Post("turn")
+  turn(
+    @CurrentUser() user: RequestUser,
+    @Param("projectId") projectId: string,
+    @Body()
+    body: {
+      userText?: string;
+      history?: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+    },
+  ) {
+    return this.voice.turn(user.organizationId, projectId, body || {});
+  }
+
+  /** Execute a knowledge tool during a live call. */
   @MinRole("editor")
   @Post("tools/:name")
   runTool(

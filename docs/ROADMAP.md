@@ -5,10 +5,10 @@ Semantic Versioning (`MAJOR.MINOR.PATCH`). Every change is recorded in
 
 ---
 
-## v0.1.0 — PoC baseline (current)
+## v0.1.0 — PoC baseline
 
-Working single-tenant voice loop: ElevenLabs `eleven_v3_conversational` (az) +
-WebRTC + store tools. Reference for the voice engine. Not production baseline.
+Historical single-tenant voice loop (vendor realtime). Superseded by the
+provider-agnostic Edge Neural pipeline (ADR-0003).
 
 ## v0.2.0 — Foundation
 
@@ -23,11 +23,12 @@ WebRTC + store tools. Reference for the voice engine. Not production baseline.
 - Create Project, pick Business Template, edit Agent (prompt/voice/language),
   activate/deactivate. Full tenant isolation end-to-end.
 
-## v0.4.0 — Voice engine abstraction
+## v0.4.0 — Voice engine abstraction (current)
 
-- `voice-engine` port + **Azure (az-AZ)** and **ElevenLabs** adapters.
-- Per-project voice selection; browser WebRTC test call per project.
-- Barge-in, rate, intonation normalized across providers.
+- `@aivoiceos/voice-engine` port + **Edge Neural** default adapter
+  (free az-AZ Banu/Babek TTS, browser STT, cheap LLM). ElevenLabs removed.
+- Per-project operator (Leyla/Samir) + neural voice; browser pipeline test call.
+- Future adapters: Azure Speech (SLA), `local_open`.
 
 ## v0.5.0 — Knowledge engine
 

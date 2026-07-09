@@ -116,14 +116,16 @@ export const api = {
       body: JSON.stringify({ status }),
     }),
 
-  // Voice — browser test call
+  // Voice — provider-agnostic pipeline (Edge neural TTS + LLM turns)
   voiceSession: (pid: string) =>
     request<{
       provider: string;
-      connectionType: "websocket" | "webrtc";
-      signedUrl: string;
+      engine?: string;
+      transport: "pipeline" | "websocket" | "webrtc";
+      connectionType?: string;
+      signedUrl?: string;
       token?: string;
-      agent_id: string;
+      agent_id?: string | null;
       projectId: string;
       projectName: string;
       businessLabel: string;
@@ -132,10 +134,36 @@ export const api = {
       operatorGender: "female" | "male" | "unknown";
       companyName?: string;
       firstMessage: string;
+      ttsVoiceId?: string;
       userPrompt?: string | null;
       projectStatus?: string;
       tools: string[];
     }>(`/projects/${pid}/voice/session`, { method: "POST", body: "{}" }),
+  voiceSpeak: (pid: string, body: { text?: string }) =>
+    request<{
+      audioBase64: string;
+      mimeType: string;
+      provider: string;
+    }>(`/projects/${pid}/voice/speak`, {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
+  voiceTurn: (
+    pid: string,
+    body: {
+      userText: string;
+      history?: Array<{ role: "user" | "assistant" | "system"; content: string }>;
+    },
+  ) =>
+    request<{
+      replyText: string;
+      audioBase64: string;
+      mimeType: string;
+      provider: string;
+    }>(`/projects/${pid}/voice/turn`, {
+      method: "POST",
+      body: JSON.stringify(body || {}),
+    }),
   voiceTool: (pid: string, name: string, args: Record<string, unknown>) =>
     request<any>(`/projects/${pid}/voice/tools/${name}`, {
       method: "POST",

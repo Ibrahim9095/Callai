@@ -15,7 +15,8 @@ export interface OperatorPreset {
   name: string;
   gender: OperatorGender;
   /** Default catalog voice for this operator. */
-  voiceProvider: "azure" | "elevenlabs";
+  /** Catalog provider id — runtime maps azure → free edge_neural TTS. */
+  voiceProvider: "azure" | "edge_neural";
   voiceId: string;
   label: string;
 }
@@ -29,7 +30,7 @@ export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
     id: "leyla",
     name: "Leyla",
     gender: "female",
-    voiceProvider: "azure",
+    voiceProvider: "edge_neural",
     voiceId: "az-AZ-BanuNeural",
     label: "Leyla — qadın",
   },
@@ -37,7 +38,7 @@ export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
     id: "samir",
     name: "Samir",
     gender: "male",
-    voiceProvider: "azure",
+    voiceProvider: "edge_neural",
     voiceId: "az-AZ-BabekNeural",
     label: "Samir — kişi",
   },

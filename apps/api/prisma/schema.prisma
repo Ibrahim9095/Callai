@@ -139,13 +139,13 @@ model Agent {
   /// User Prompt — injected at the start of every live conversation
   userPrompt      String   @default("")
   language        String   @default("az")
-  voiceProvider   String   @default("azure")
+  voiceProvider   String   @default("edge_neural")
   voiceId         String   @default("az-AZ-BanuNeural")
   /// LLM temperature 0–1 (voice agent)
   temperature     Float    @default(0.45)
   /// Optional max tokens for agent replies (null = provider default)
   maxTokens       Int?
-  /// Cached remote provider agent id (e.g. ElevenLabs agent_…) for session reuse
+  /// Cached remote provider agent id (optional; unused by pipeline providers)
   externalAgentId String?
   greeting        String?
   active          Boolean  @default(false)

@@ -16,7 +16,7 @@ export function inactiveProjectMessage(status: ProjectLifecycleStatus | string):
   return "Bu layihə müvəqqəti deaktiv edilib. Zəng qəbul olunmur.";
 }
 
-/** Soft re-prompt when caller is silent (ElevenLabs soft_timeout ≤ 8s). */
+/** Soft re-prompt when caller is silent during a live session. */
 export const SILENCE_REPROMPT_AZ = "Narahat olmayın, sizi dinləyirəm.";
 
 /** Natural call-center TTS defaults (not robotic slow, not rushed). */

@@ -99,14 +99,13 @@ interface VoiceProvider {
 
 Adapters:
 
-- **Azure Speech (default, affordable):** native `az-AZ` voices (Banu, Babek);
-  real-time via Azure Voice Live / STT+TTS pipeline. Cheapest native Azerbaijani.
-- **ElevenLabs (premium):** `eleven_v3_conversational` (az) — most expressive.
-- **OpenAI Realtime:** fallback / non-AZ.
+- **Edge Neural (default, $0 TTS):** Microsoft neural `az-AZ` Banu/Babek via
+  `msedge-tts` + browser Web Speech STT + cheap chat LLM. Transport: `pipeline`.
+- **Azure Speech (future paid SLA):** same Banu/Babek voices with commercial SLA.
+- **Local open (future):** self-hosted Whisper AZ + open TTS behind `local_open`.
+- **ElevenLabs:** not used (cost / lock-in).
 
-Selection is per-Project (operator chooses in the panel). The PoC already proves
-the ElevenLabs loop; Azure adapter is the budget production default.
-
+Selection is per-Project; the registry maps catalog ids onto the active adapter.
 See ADR-0003.
 
 ## 7. Telephony (port + adapters)
@@ -146,8 +145,8 @@ See ADR-0005.
 
 ## 9. Open decisions (need confirmation before scaffolding)
 
-1. **Voice default:** Azure `az-AZ` (cheap, native) as default + ElevenLabs as
-   premium. — *Recommended.*
+1. **Voice default:** Edge Neural Banu/Babek ($0 TTS) behind `VoiceProvider`. —
+   *Accepted (ADR-0003).*
 2. **Telephony:** DIDWW (or equivalent AZ SIP) for +994, behind SIP adapter;
    browser calls for PoC. — *Recommended.*
 

@@ -6,8 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 
 ## [Unreleased]
 
+### Changed
+- **Voice Engine (ADR-0003):** ElevenLabs removed from the default path. New
+  `@aivoiceos/voice-engine` port with **Edge Neural** adapter — free Microsoft
+  neural TTS (`az-AZ-BanuNeural` / `az-AZ-BabekNeural`), browser Web Speech STT
+  (`az-AZ`), cheap OpenAI chat LLM. Transport: `pipeline` (no vendor realtime
+  socket). Swap providers without changing call orchestration.
+- Env: `VOICE_PROVIDER=edge_neural`, `VOICE_LLM_MODEL=gpt-4o-mini`.
+
 ### Fixed
-- **Runtime `error_type` crash** (ElevenLabs SDK): patched
+- **Runtime `error_type` crash** (legacy ElevenLabs SDK path): patched
   `handleErrorEvent` when `error_event` is missing — this was killing calls
   mid-conversation. Persisted via `patch-package`.
 - **Call session 500** from invalid `soft_timeout` (>8s) — clamped to 7.5s.
