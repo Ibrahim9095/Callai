@@ -122,6 +122,7 @@ export class VoiceService {
 
     // Inject live sheet catalog so the agent knows every uploaded file/sheet
     let knowledgeCatalog: string | null = null;
+    const asrKeywords: string[] = [];
     try {
       const listed = await this.knowledge.agentListCollections(organizationId, project.id);
       if (listed?.collections?.length) {
@@ -139,6 +140,11 @@ export class VoiceService {
                 .map((f) => f.label || f.key)
                 .join(", ");
               const file = c.file ? ` · fayl: ${c.file}` : "";
+              asrKeywords.push(c.label, c.name);
+              for (const f of c.fields || []) {
+                if (f.label) asrKeywords.push(f.label);
+                if (f.key) asrKeywords.push(f.key.replace(/_/g, " "));
+              }
               return `- «${c.label}» (${c.name})${file} · ${c.recordCount} sətir · sahələr: ${fields || "—"}`;
             },
           )
@@ -172,6 +178,7 @@ export class VoiceService {
       ttsRate,
       temperature: agent.temperature ?? 0.55,
       maxTokens: agent.maxTokens ?? 220,
+      asrKeywords: [...new Set(asrKeywords.filter(Boolean))].slice(0, 40),
     };
   }
 
@@ -225,6 +232,7 @@ export class VoiceService {
       });
     }
 
+    // Always re-sync ElevenLabs agent so KB catalog + ASR keywords stay fresh
     const session = await provider.issueClientSession({
       projectId: project.id,
       projectName: project.name,
@@ -237,6 +245,8 @@ export class VoiceService {
       voiceProvider: engineId,
       temperature: bundle.temperature,
       maxTokens: bundle.maxTokens,
+      keywords: bundle.asrKeywords,
+      // Force patch/recreate so prompt+tools+ASR keywords update every dial
       cachedExternalId: canReuseExternal ? agent.externalAgentId : null,
     });
 

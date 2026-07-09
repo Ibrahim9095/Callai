@@ -4,6 +4,12 @@ import { coerceFieldValue, type FieldDef } from "@aivoiceos/shared";
 import { parseCsv } from "./csv";
 import { parseUploadedFile, slugKey, supportedExtensions } from "./parse-file";
 import { CreateCollectionDto } from "./dto/knowledge.dto";
+import {
+  expandSearchTokens,
+  isPriceIntent,
+  isRoomIntent,
+  looksLikePriceField,
+} from "../voice/az-speech";
 
 /**
  * Per-project structured data ("knowledge"). Everything is scoped by
@@ -285,7 +291,7 @@ export class KnowledgeService {
         name: c.name,
         label: c.label,
         file: c.file?.filename || null,
-        fields: (c.fields as FieldDef[]).map((f) => ({ key: f.key, label: f.label, type: f.type })),
+        fields: (c.fields as unknown as FieldDef[]).map((f) => ({ key: f.key, label: f.label, type: f.type })),
         recordCount: c._count.records,
       })),
     };
@@ -332,7 +338,11 @@ export class KnowledgeService {
     }
 
     const q = this.normalize(opts.query || "");
-    const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+    const rawTokens = q ? q.split(/\s+/).filter(Boolean) : [];
+    // Expand ASR mishears: niymet→qiymet, kol→qol, …
+    const tokens = expandSearchTokens(rawTokens);
+    const priceIntent = isPriceIntent(tokens);
+    const roomIntent = isRoomIntent(tokens);
     // Higher default so agent can scan more sheets before answering
     const limit = Math.min(Math.max(Number(opts.limit) || 25, 1), 80);
     type Hit = {
@@ -348,6 +358,22 @@ export class KnowledgeService {
 
     for (const c of collections) {
       scannedCollections += 1;
+      const fields = (Array.isArray(c.fields) ? c.fields : []) as unknown as FieldDef[];
+      const fieldMeta = fields.map((f) => ({
+        key: f.key,
+        label: f.label || f.key,
+        normKey: this.normalize(f.key),
+        normLabel: this.normalize(f.label || f.key),
+      }));
+      const hasPriceCol = fieldMeta.some((f) => looksLikePriceField(f.key, f.label));
+      const hasRoomCol = fieldMeta.some(
+        (f) => /otaq|room|nov|tip|type/.test(f.normKey) || /otaq|room|nov|tip/.test(f.normLabel),
+      );
+      // Include field labels/keys in haystack so "qiymət" matches column gecelik_qiymet_azn
+      const schemaHay = this.normalize(
+        fieldMeta.map((f) => `${f.key} ${f.label}`).join(" ") + " " + c.name + " " + c.label,
+      );
+
       for (const rec of c.records) {
         scannedRecords += 1;
         const data = (rec.data || {}) as Record<string, unknown>;
@@ -367,13 +393,27 @@ export class KnowledgeService {
         }
 
         let score = 0;
+        const valueHay = this.normalize(JSON.stringify(data));
+        const hay = `${valueHay} ${schemaHay}`;
+
         if (tokens.length) {
-          const hay = this.normalize(JSON.stringify(data));
           const matched = tokens.filter((t) => hay.includes(t));
-          // Prefer full AND match; keep partial OR hits as alternatives
-          if (matched.length === 0) continue;
-          score = matched.length / tokens.length;
-          if (matched.length === tokens.length) score += 1;
+          if (matched.length === 0) {
+            // Intent fallback: "qiymət nədir?" with no literal match → still return rows
+            // that have price columns (so agent can read real numbers).
+            if (priceIntent && hasPriceCol) {
+              score = 0.35;
+            } else if (roomIntent && hasRoomCol) {
+              score = 0.3;
+            } else {
+              continue;
+            }
+          } else {
+            score = matched.length / tokens.length;
+            if (matched.length === tokens.length) score += 1;
+            if (priceIntent && hasPriceCol) score += 0.25;
+            if (roomIntent && hasRoomCol) score += 0.2;
+          }
         } else {
           score = 1;
         }
@@ -398,6 +438,7 @@ export class KnowledgeService {
       searchedCollections: scannedCollections,
       scannedRecords,
       collectionsSearched: searchedLabels,
+      queryExpanded: tokens,
       message:
         results.length > 0
           ? `${results.length} nəticə tapıldı (${scannedCollections} siyahı / ${scannedRecords} sətir yoxlanıldı)`
@@ -436,7 +477,7 @@ export class KnowledgeService {
       };
     }
 
-    const fields = (Array.isArray(collection.fields) ? collection.fields : []) as FieldDef[];
+    const fields = (Array.isArray(collection.fields) ? collection.fields : []) as unknown as FieldDef[];
     const clean = this.coerce(fields, opts.data || {});
     // Soft-fill status if the collection has it and caller omitted it
     const statusField =

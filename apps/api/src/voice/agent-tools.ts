@@ -25,13 +25,14 @@ export const AGENT_TOOLS = [
     type: "function" as const,
     name: "search_records",
     description:
-      "Məlumat bazasında axtarış. Qiymət, stok, otaq, rezerv, məhsul, xidmət — YALNIZ buradan. collection boş burax → BÜTÜN siyahılarda/fayllarda axtarır. Uydurma demə; nəticə yoxdursa digər sözlə və ya digər siyahıda yenə axtar, sonra alternativ təklif et.",
+      "Məlumat bazasında axtarış — MƏCBURİ hər faktiki sualdan əvvəl. Qiymət, stok, otaq, rezerv, məhsul, xidmət — YALNIZ buradan. collection boş burax → BÜTÜN siyahılarda/fayllarda axtarır. ASR səhvi: «niymet»=qiymət, «kol»=qol — yenə axtar. Alətsiz «məlumatım yoxdur» demə. Nəticə yoxdursa digər sözlə yenə axtar, sonra alternativ təklif et.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description: "Axtarış sözü, məs: standart otaq, boş, 2 nəfər, pizza, 200 manat",
+          description:
+            "Axtarış sözü, məs: qiymət, standart otaq, boş, rezerv. ASR səhvi olsa da «niymet»/«kol» yazıla bilər — sistem qiymət/qol kimi genişləndirir.",
         },
         collection: {
           type: "string",

@@ -25,6 +25,7 @@ import {
   TURN_CALL_CENTER,
   INTERRUPTION_IGNORE_TERMS_AZ,
 } from "../call-lifecycle";
+import { AZ_ASR_KEYWORDS } from "../az-speech";
 
 const ELEVEN_API = "https://api.elevenlabs.io/v1";
 
@@ -208,36 +209,12 @@ function buildAgentBody(spec: VoiceAgentSpec) {
         ...(spec.keywords || []),
         spec.persona,
         spec.projectName,
-        "Bakı",
-        "Azərbaycan",
-        "manat",
-        "sifariş",
-        "rezerv",
-        "rezervasiya",
-        "buyurun",
-        "əlbəttə",
-        "xahiş",
-        "bir saniyə",
-        "necəsiz",
-        "bilərəm",
-        "qol saatı",
-        "həkim",
-        "klinika",
-        "müştəri",
-        "gözəllik",
-        "otel",
-        "otaq",
-        "qiymət",
-        "endirim",
-        "zəhmət olmasa",
-        "sağ olun",
-        "təşəkkür",
-        "aydındır",
-        "başa düşdüm",
-        "narahat olmayın",
+        ...AZ_ASR_KEYWORDS,
+        // Dynamic from catalog-ish project name tokens
+        ...(spec.projectName || "").split(/\s+/).filter((w) => w.length > 2),
       ].filter(Boolean),
     ),
-  ).slice(0, 50);
+  ).slice(0, 100);
 
   const promptBlock: Record<string, unknown> = {
     prompt: spec.systemPrompt,
