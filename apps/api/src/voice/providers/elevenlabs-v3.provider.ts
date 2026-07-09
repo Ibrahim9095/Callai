@@ -263,8 +263,8 @@ function buildAgentBody(spec: VoiceAgentSpec) {
       agent: {
         first_message: spec.firstMessage,
         language: "az",
-        // Allow barge-in after greeting — caller can cut the operator mid-sentence
-        disable_first_message_interruptions: false,
+        // NEVER cut the greeting — echo/noise was killing "Salam… King Oteldən…" mid-sentence
+        disable_first_message_interruptions: true,
         prompt: promptBlock,
       },
       tts,
@@ -274,9 +274,9 @@ function buildAgentBody(spec: VoiceAgentSpec) {
         user_input_audio_format: "pcm_16000",
         keywords,
       },
-      // Allow real barge-in; ignore only short backchannels (hə/tamam)
+      // Ignore background TV/other voices; real barge-in still works after greeting
       vad: {
-        background_voice_detection: true,
+        background_voice_detection: false,
       },
       turn: {
         turn_timeout: TURN_CALL_CENTER.turn_timeout,

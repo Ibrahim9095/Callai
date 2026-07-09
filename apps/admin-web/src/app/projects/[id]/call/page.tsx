@@ -136,6 +136,11 @@ export default function TestCallPage() {
   const agentSpeakingRef = useRef(false);
   /** Mic currently open for barge-in (only while agent speaking) */
   const bargeOpenRef = useRef(false);
+  /**
+   * Protect the first greeting from echo/noise barge-in.
+   * Mic stays muted until the operator finishes the first spoken turn.
+   */
+  const greetingLockRef = useRef(true);
   const speechAboveSinceRef = useRef<number | null>(null);
   const speechBelowSinceRef = useRef<number | null>(null);
   const lastVadScoreRef = useRef(0);
@@ -168,7 +173,7 @@ export default function TestCallPage() {
   }, [lines, tools]);
 
   const applyMicTransmit = useCallback((transmit: boolean) => {
-    if (mutedRef.current) {
+    if (mutedRef.current || greetingLockRef.current || !transmit) {
       try {
         conversationRef.current?.setMicMuted?.(true);
       } catch {
@@ -179,7 +184,6 @@ export default function TestCallPage() {
       });
       return;
     }
-    // Always keep mic open (unless user muted) so barge-in works
     try {
       conversationRef.current?.setMicMuted?.(false);
     } catch {
@@ -188,7 +192,6 @@ export default function TestCallPage() {
     localStreamRef.current?.getAudioTracks().forEach((t) => {
       t.enabled = true;
     });
-    void transmit;
   }, []);
 
   const setAgentSpeaking = useCallback(
@@ -197,15 +200,30 @@ export default function TestCallPage() {
       bargeOpenRef.current = false;
       speechAboveSinceRef.current = null;
       speechBelowSinceRef.current = null;
-      // Mic stays open so caller can interrupt and operator stops
+
+      if (speaking) {
+        // While operator speaks: mute mic during greeting lock; after that allow barge-in
+        if (greetingLockRef.current) {
+          applyMicTransmit(false);
+        } else {
+          // Post-greeting: keep mic open so caller can interrupt
+          applyMicTransmit(true);
+        }
+        return;
+      }
+
+      // Operator finished a turn — unlock greeting and open mic for the caller
+      if (greetingLockRef.current) {
+        greetingLockRef.current = false;
+      }
       applyMicTransmit(true);
     },
     [applyMicTransmit],
   );
 
   const evaluateBargeInGate = useCallback(() => {
-    if (!agentSpeakingRef.current || mutedRef.current) return;
-    // Mic already open — track sustained speech only for UI / diagnostics
+    if (!agentSpeakingRef.current || mutedRef.current || greetingLockRef.current) return;
+
     const now = performance.now();
     const level = levelRef.current;
     const vad = lastVadScoreRef.current;
@@ -219,6 +237,7 @@ export default function TestCallPage() {
       const held = now - speechAboveSinceRef.current;
       if (!bargeOpenRef.current && held >= BARGE_IN_GATE.speechHoldMs) {
         bargeOpenRef.current = true;
+        applyMicTransmit(true);
       }
     } else {
       speechAboveSinceRef.current = null;
@@ -230,7 +249,7 @@ export default function TestCallPage() {
         }
       }
     }
-  }, []);
+  }, [applyMicTransmit]);
 
   const stopMeter = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
@@ -297,6 +316,7 @@ export default function TestCallPage() {
     sessionGenerationRef.current += 1;
     agentSpeakingRef.current = false;
     bargeOpenRef.current = false;
+    greetingLockRef.current = true;
     speechAboveSinceRef.current = null;
     speechBelowSinceRef.current = null;
     lastVadScoreRef.current = 0;
@@ -380,6 +400,7 @@ export default function TestCallPage() {
     mutedRef.current = false;
     agentSpeakingRef.current = false;
     bargeOpenRef.current = false;
+    greetingLockRef.current = true;
     speechAboveSinceRef.current = null;
     speechBelowSinceRef.current = null;
     lastVadScoreRef.current = 0;
@@ -456,14 +477,15 @@ export default function TestCallPage() {
         onConnect: () => {
           if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
           inCallRef.current = true;
+          greetingLockRef.current = true;
           setPhase("live");
           try {
             conversationRef.current?.setVolume?.({ volume: PLAYBACK_VOLUME });
-            conversationRef.current?.setMicMuted?.(false);
           } catch {
             /* ignore */
           }
-          applyMicTransmit(true);
+          // Mute mic until greeting finishes — prevents echo cutting "Salam… King Oteldən…"
+          applyMicTransmit(false);
           pushLine({
             role: "system",
             text: "Zəng açıldı — salamdan sonra danışa bilərsiniz",

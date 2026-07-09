@@ -48,18 +48,18 @@ export const TTS_CALL_CENTER = {
  * - never auto-hangup on silence
  */
 export const TURN_CALL_CENTER = {
-  /** Re-engage if user goes quiet (seconds) */
-  turn_timeout: 10,
+  /** Re-engage if user goes quiet (seconds) — keep call alive */
+  turn_timeout: 15,
   silence_end_call_timeout: -1,
-  /** Eager: faster replies after natural end of user phrase */
-  turn_eagerness: "eager" as const,
+  /** Normal: don't jump mid-greeting / mid-sentence; still answers quickly */
+  turn_eagerness: "normal" as const,
   speculative_turn: true,
   turn_model: "turn_v3",
   /**
    * One soft filler if LLM is slow — avoid stacking.
-   * 2.8s: most replies skip filler; slow ones get a single human beat.
+   * 3.2s: most replies skip filler; slow ones get a single human beat.
    */
-  soft_timeout_seconds: 2.8,
+  soft_timeout_seconds: 3.2,
   max_soft_timeouts_per_generation: 1,
 } as const;
 

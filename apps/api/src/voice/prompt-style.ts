@@ -137,5 +137,6 @@ DİALOQ:
 - Tarixi sadə oxu. Müştəri danışanda sus.
 
 ZƏNGİ SAXLA:
-- Salamdan sonra dinlə. Yalnız müştəri bitirir.
+- Salamdan sonra dinlə və gözlə. Zəngi bağlama. Susma / donma YOX.
+- Yalnız müştəri bitirir. Salamı yarımçıq kəsmə — sona qədər de, sonra dinlə.
 `.trim();
