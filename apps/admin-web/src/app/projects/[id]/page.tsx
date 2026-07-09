@@ -267,9 +267,23 @@ export default function ProjectDetailPage() {
         </section>
 
         <section className="card">
+          <div className="row">
+            <div>
+              <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Test zəng (voice)</h2>
+              <p className="muted" style={{ margin: "0.3rem 0 0" }}>
+                Brauzerdən canlı söhbət — agent fayllardan oxuyub rezerv/sifariş yaza bilər.
+                Əvvəl data yükləyin, sonra zəng edin.
+              </p>
+            </div>
+            <div className="spacer" />
+            <Link className="btn primary" href={`/projects/${id}/call`}>Test zəng →</Link>
+          </div>
+        </section>
+
+        <section className="card">
           <h2 className="title" style={{ fontSize: "1.05rem", marginTop: 0 }}>Növbəti mərhələlər</h2>
           <p className="muted" style={{ margin: 0 }}>
-            CRM və analitika bu layihəyə sonrakı versiyalarda əlavə olunacaq (bax: docs/ROADMAP.md).
+            Canlı +994 SIP yönləndirmə, CRM və analitika sonrakı versiyalarda (docs/ROADMAP.md).
           </p>
         </section>
       </div>

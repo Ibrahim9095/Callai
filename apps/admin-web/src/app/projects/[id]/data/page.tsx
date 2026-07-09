@@ -116,8 +116,8 @@ export default function DataPage() {
           <div>
             <h1 className="title" style={{ margin: 0 }}>Bilik bazası / Data</h1>
             <p className="muted" style={{ margin: "0.3rem 0 0" }}>
-              Excel/CSV faylları yükləyin — istənilən sayda, çox vərəqli (sheet) də olar. AI agent
-              zəngdə birbaşa buradan oxuyacaq (stok, boş otaq, qiymət).
+              Excel, CSV, PDF, Word və ya TXT yükləyin — istənilən sayda. Çox vərəqli Excel də olar.
+              AI agent zəngdə buradan oxuyub rezerv/sifariş yazacaq.
             </p>
           </div>
           <div className="spacer" />
@@ -127,7 +127,7 @@ export default function DataPage() {
           <input
             ref={fileInput}
             type="file"
-            accept=".xlsx,.xls,.csv"
+            accept=".xlsx,.xls,.csv,.pdf,.txt,.docx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             multiple
             style={{ display: "none" }}
             onChange={onUpload}
@@ -143,8 +143,8 @@ export default function DataPage() {
             <p className="muted">Yüklənir…</p>
           ) : files.length === 0 ? (
             <p className="muted">
-              Hələ fayl yoxdur. «+ Fayl əlavə et» ilə Excel/CSV yükləyin (məs. otaqlar.xlsx —
-              içində «Otaqlar», «Rezervlər» vərəqləri ola bilər).
+              Hələ fayl yoxdur. «+ Fayl əlavə et» ilə Excel/CSV/PDF yükləyin (məs. otaqlar.xlsx —
+              «Otaqlar» + «Rezervlər» vərəqləri; və ya menyu.pdf).
             </p>
           ) : (
             <div className="list">

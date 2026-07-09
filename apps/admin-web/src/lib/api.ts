@@ -105,4 +105,20 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ status }),
     }),
+
+  // Voice — browser test call
+  voiceSession: (pid: string) =>
+    request<{
+      provider: string;
+      token: string;
+      agent_id: string;
+      projectId: string;
+      projectName: string;
+      tools: string[];
+    }>(`/projects/${pid}/voice/session`, { method: "POST", body: "{}" }),
+  voiceTool: (pid: string, name: string, args: Record<string, unknown>) =>
+    request<any>(`/projects/${pid}/voice/tools/${name}`, {
+      method: "POST",
+      body: JSON.stringify(args || {}),
+    }),
 };

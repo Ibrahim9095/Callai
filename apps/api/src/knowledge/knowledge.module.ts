@@ -6,5 +6,6 @@ import { FilesController } from "./files.controller";
 @Module({
   providers: [KnowledgeService],
   controllers: [KnowledgeController, FilesController],
+  exports: [KnowledgeService],
 })
 export class KnowledgeModule {}

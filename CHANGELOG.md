@@ -7,6 +7,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 ## [Unreleased]
 
 ### Added
+- **PDF / TXT / DOCX upload** alongside Excel/CSV — mobile file picker accepts
+  these types; clearer error when a format is unsupported. PDF/Word become a
+  text collection; spreadsheets stay multi-sheet → collections.
+- **Voice milestone (browser test call)**: per-project WebRTC call via
+  ElevenLabs; agent tools `list_collections`, `search_records`, `create_record`,
+  `update_record` read/write the project's uploaded data live (hotel rooms,
+  restaurant table reservations, etc. — same generic logic). Admin page:
+  `/projects/:id/call`. `Agent.externalAgentId` caches the remote agent.
 - Custom (free-text) business type when creating a project ("Digər") — any
   business (e.g. "Təkər təmiri") can be onboarded; agent gets a generated AZ
   starter prompt that is fully editable. Adds `Project.businessLabel`.
@@ -26,13 +34,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
   "no fabrication — read only from uploaded files" behavior.
 
 ### Changed
-- Knowledge is now **file-driven** (upload Excel/CSV) instead of manual row
+- Knowledge is now **file-driven** (upload Excel/CSV/PDF/…) instead of manual row
   entry / CSV paste, and projects no longer auto-seed empty collections.
 
 ### Notes
 - Provider decisions ADR-0003 (voice: Azure default + ElevenLabs premium) and
   ADR-0004 (telephony: local SIP/DIDWW for +994, browser calls for PoC) remain
-  the working direction; voice adapters land in v0.4.0, telephony in v0.6.0.
+  the working direction; Azure Speech adapter and live SIP routing follow.
+- **Why some phone files could not be added before:** the picker only accepted
+  `.xlsx/.xls/.csv`. PDF and generic Office docs were filtered out by the OS
+  picker / rejected by the API. That is fixed for PDF/TXT/DOCX.
 
 ## [0.2.0] — Foundation + Admin panel
 

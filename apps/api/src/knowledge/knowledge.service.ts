@@ -2,13 +2,13 @@ import { BadRequestException, Injectable, NotFoundException } from "@nestjs/comm
 import { PrismaService } from "../prisma/prisma.service";
 import { coerceFieldValue, type FieldDef } from "@aivoiceos/shared";
 import { parseCsv } from "./csv";
-import { parseWorkbook, slugKey } from "./parse-file";
+import { parseUploadedFile, slugKey, supportedExtensions } from "./parse-file";
 import { CreateCollectionDto } from "./dto/knowledge.dto";
 
 /**
  * Per-project structured data ("knowledge"). Everything is scoped by
  * organizationId + projectId (tenant isolation). The AI agent reads/writes
- * this data via generic tools during calls (wired in the voice milestone).
+ * this data via generic tools during calls.
  */
 @Injectable()
 export class KnowledgeService {
@@ -17,9 +17,10 @@ export class KnowledgeService {
   private async assertProject(organizationId: string, projectId: string) {
     const project = await this.prisma.project.findFirst({
       where: { id: projectId, organizationId },
-      select: { id: true },
+      select: { id: true, name: true, businessTemplate: true, businessLabel: true },
     });
     if (!project) throw new NotFoundException("Project tapılmadı");
+    return project;
   }
 
   private async getCollection(projectId: string, collectionId: string) {
@@ -51,9 +52,8 @@ export class KnowledgeService {
   }
 
   /**
-   * Upload & parse an Excel/CSV file. Each sheet becomes a Collection; rows
-   * become records with inferred field types. Multiple files per project are
-   * supported; the agent reads across all of them.
+   * Upload & parse Excel/CSV/PDF/TXT/DOCX. Spreadsheet sheets → Collections;
+   * documents → one text collection. Multiple files per project supported.
    */
   async uploadFile(
     organizationId: string,
@@ -66,12 +66,19 @@ export class KnowledgeService {
 
     let parsed;
     try {
-      parsed = parseWorkbook(buffer, filename);
-    } catch {
-      throw new BadRequestException("Fayl oxunmadı. Excel (.xlsx/.xls) və ya CSV yükləyin.");
+      parsed = await parseUploadedFile(buffer, filename);
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : "Fayl oxunmadı";
+      const msg =
+        /token too long|bad xref|invalid pdf|password/i.test(raw)
+          ? "PDF oxunmadı (skan/şəkil və ya zədələnmiş fayl ola bilər). Mətnli PDF və ya Excel/CSV yükləyin"
+          : raw;
+      throw new BadRequestException(
+        `${msg}. Dəstəklənən: ${supportedExtensions().join(", ")}`,
+      );
     }
     if (parsed.sheets.length === 0) {
-      throw new BadRequestException("Faylda oxunacaq cədvəl (başlıq + sətir) tapılmadı");
+      throw new BadRequestException("Faylda oxunacaq cədvəl/mətn tapılmadı");
     }
 
     const existing = await this.prisma.collection.findMany({
@@ -245,5 +252,214 @@ export class KnowledgeService {
     if (toCreate.length === 0) throw new BadRequestException("İdxal ediləcək sətir yoxdur");
     await this.prisma.collectionRecord.createMany({ data: toCreate });
     return { ok: true, imported: toCreate.length, mappedColumns: columnField.filter(Boolean).length };
+  }
+
+  // ─── Agent tools (voice runtime) ─────────────────────────────────────────
+
+  private normalize(text = ""): string {
+    return String(text)
+      .toLowerCase()
+      .replace(/ə/g, "e")
+      .replace(/ı/g, "i")
+      .replace(/ö/g, "o")
+      .replace(/ü/g, "u")
+      .replace(/ç/g, "c")
+      .replace(/ş/g, "s")
+      .replace(/ğ/g, "g")
+      .trim();
+  }
+
+  /** List all collections (sheets) the agent can read/write for this project. */
+  async agentListCollections(organizationId: string, projectId: string) {
+    const project = await this.assertProject(organizationId, projectId);
+    const collections = await this.prisma.collection.findMany({
+      where: { projectId },
+      orderBy: { createdAt: "asc" },
+      include: { _count: { select: { records: true } }, file: { select: { filename: true } } },
+    });
+    return {
+      project: project.name,
+      business: project.businessLabel || project.businessTemplate,
+      collections: collections.map((c) => ({
+        id: c.id,
+        name: c.name,
+        label: c.label,
+        file: c.file?.filename || null,
+        fields: (c.fields as FieldDef[]).map((f) => ({ key: f.key, label: f.label, type: f.type })),
+        recordCount: c._count.records,
+      })),
+    };
+  }
+
+  /**
+   * Search records across one or all collections. Matches query tokens against
+   * any stringified field value (AZ-normalized). Optional filters by field key.
+   */
+  async agentSearch(
+    organizationId: string,
+    projectId: string,
+    opts: {
+      query?: string;
+      collection?: string; // name, label, or id
+      filters?: Record<string, unknown>;
+      limit?: number;
+    } = {},
+  ) {
+    await this.assertProject(organizationId, projectId);
+    const all = await this.prisma.collection.findMany({
+      where: { projectId },
+      include: { records: true },
+    });
+
+    const want = opts.collection ? this.normalize(opts.collection) : "";
+    const collections = want
+      ? all.filter(
+          (c) =>
+            this.normalize(c.name) === want ||
+            this.normalize(c.label) === want ||
+            c.id === opts.collection ||
+            this.normalize(c.name).includes(want) ||
+            this.normalize(c.label).includes(want),
+        )
+      : all;
+
+    if (want && collections.length === 0) {
+      return {
+        found: false,
+        message: `«${opts.collection}» adlı siyahı tapılmadı. Mövcud: ${all.map((c) => c.label).join(", ") || "yoxdur"}`,
+        results: [],
+      };
+    }
+
+    const q = this.normalize(opts.query || "");
+    const tokens = q ? q.split(/\s+/).filter(Boolean) : [];
+    const limit = Math.min(Math.max(Number(opts.limit) || 12, 1), 40);
+    const results: Array<{
+      collection: string;
+      collectionLabel: string;
+      recordId: string;
+      data: Record<string, unknown>;
+    }> = [];
+
+    for (const c of collections) {
+      for (const rec of c.records) {
+        const data = (rec.data || {}) as Record<string, unknown>;
+        if (opts.filters && typeof opts.filters === "object") {
+          let ok = true;
+          for (const [k, v] of Object.entries(opts.filters)) {
+            if (v === undefined || v === null || v === "") continue;
+            const cell = data[k];
+            if (this.normalize(String(cell ?? "")) !== this.normalize(String(v))) {
+              // also allow partial match for text
+              if (!this.normalize(String(cell ?? "")).includes(this.normalize(String(v)))) {
+                ok = false;
+                break;
+              }
+            }
+          }
+          if (!ok) continue;
+        }
+        if (tokens.length) {
+          const hay = this.normalize(JSON.stringify(data));
+          if (!tokens.every((t) => hay.includes(t))) continue;
+        }
+        results.push({
+          collection: c.name,
+          collectionLabel: c.label,
+          recordId: rec.id,
+          data,
+        });
+        if (results.length >= limit) break;
+      }
+      if (results.length >= limit) break;
+    }
+
+    return {
+      found: results.length > 0,
+      count: results.length,
+      message:
+        results.length > 0
+          ? `${results.length} nəticə tapıldı`
+          : "Uyğun sətir tapılmadı — digər sözlə axtarın və ya başqa siyahıya baxın",
+      results,
+    };
+  }
+
+  /** Append a row to a collection (reservation / order / appointment). */
+  async agentCreateRecord(
+    organizationId: string,
+    projectId: string,
+    opts: { collection: string; data: Record<string, unknown> },
+  ) {
+    await this.assertProject(organizationId, projectId);
+    if (!opts.collection) {
+      return { ok: false, message: "Hansı siyahıya yazılacağını deyin (məs. Rezervlər)" };
+    }
+    const all = await this.prisma.collection.findMany({ where: { projectId } });
+    const want = this.normalize(opts.collection);
+    const collection =
+      all.find(
+        (c) =>
+          this.normalize(c.name) === want ||
+          this.normalize(c.label) === want ||
+          c.id === opts.collection,
+      ) ||
+      all.find(
+        (c) => this.normalize(c.name).includes(want) || this.normalize(c.label).includes(want),
+      );
+
+    if (!collection) {
+      return {
+        ok: false,
+        message: `Siyahı tapılmadı. Mövcud: ${all.map((c) => c.label).join(", ") || "yoxdur"}`,
+      };
+    }
+
+    const fields = collection.fields as unknown as FieldDef[];
+    const clean = this.coerce(fields, opts.data || {});
+    // Soft-fill status if the collection has it and caller omitted it
+    if (fields.some((f) => f.key === "status") && !clean.status) {
+      clean.status = "təsdiqləndi";
+    }
+    const record = await this.prisma.collectionRecord.create({
+      data: { collectionId: collection.id, projectId, data: clean as object },
+    });
+    return {
+      ok: true,
+      message: `«${collection.label}» siyahısına əlavə olundu`,
+      collection: collection.label,
+      recordId: record.id,
+      data: clean,
+    };
+  }
+
+  /** Update an existing record (e.g. mark room unavailable after booking). */
+  async agentUpdateRecord(
+    organizationId: string,
+    projectId: string,
+    opts: { collection?: string; recordId: string; data: Record<string, unknown> },
+  ) {
+    await this.assertProject(organizationId, projectId);
+    const record = await this.prisma.collectionRecord.findFirst({
+      where: { id: opts.recordId, projectId },
+      include: { collection: true },
+    });
+    if (!record) return { ok: false, message: "Sətir tapılmadı" };
+    const fields = record.collection.fields as unknown as FieldDef[];
+    const merged = {
+      ...(record.data as object),
+      ...this.coerce(fields, opts.data || {}),
+    };
+    const updated = await this.prisma.collectionRecord.update({
+      where: { id: record.id },
+      data: { data: merged as object },
+    });
+    return {
+      ok: true,
+      message: "Yeniləndi",
+      collection: record.collection.label,
+      recordId: updated.id,
+      data: updated.data,
+    };
   }
 }
