@@ -25,10 +25,10 @@ provider-agnostic Edge Neural pipeline (ADR-0003).
 
 ## v0.4.0 — Voice engine abstraction (current)
 
-- `@aivoiceos/voice-engine` port + **Edge Neural** default adapter
-  (free az-AZ Banu/Babek TTS, browser STT, cheap LLM). ElevenLabs removed.
-- Per-project operator (Leyla/Samir) + neural voice; browser pipeline test call.
-- Future adapters: Azure Speech (SLA), `local_open`.
+- `@aivoiceos/voice-engine` port + **OpenAI Realtime** default
+  (WebRTC speech-to-speech, env-driven models, barge-in). Edge Neural fallback.
+- Per-project operator (Leyla/Samir) + OpenAI voices (marin/cedar).
+- Target reply latency 1–2s; ElevenLabs removed.
 
 ## v0.5.0 — Knowledge engine
 

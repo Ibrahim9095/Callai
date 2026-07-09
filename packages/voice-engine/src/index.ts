@@ -41,6 +41,11 @@ export interface VoiceSessionCredentials {
   ttsVoiceId: string;
   operatorName: string;
   operatorGender: "female" | "male" | "unknown";
+  /** Realtime model id (env-driven) */
+  model?: string;
+  /** Input transcription model id */
+  sttModel?: string;
+  expiresAt?: number | string | null;
 }
 
 export interface SpeakRequest {

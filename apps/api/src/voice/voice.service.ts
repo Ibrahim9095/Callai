@@ -22,6 +22,7 @@ import {
 import { composeVoicePrompt } from "./prompt-composer";
 import { resolveVoiceProvider, defaultVoiceProviderId } from "./providers/registry";
 import { resolveTtsVoiceId } from "@aivoiceos/voice-engine";
+import { resolveOpenAiVoice } from "./providers/openai-config";
 
 @Injectable()
 export class VoiceService {
@@ -76,10 +77,17 @@ export class VoiceService {
     const persona = operator.name;
     const gender = operator.gender;
     const companyName = (project.name || businessLabel || "").trim();
-    const ttsVoiceId = resolveTtsVoiceId({
-      voiceId: agent.voiceId || operator.voiceId,
-      gender,
-    });
+    const providerHint = defaultVoiceProviderId();
+    const ttsVoiceId =
+      providerHint === "openai"
+        ? resolveOpenAiVoice({
+            voiceId: agent.voiceId || operator.voiceId,
+            gender,
+          })
+        : resolveTtsVoiceId({
+            voiceId: agent.voiceId || operator.voiceId,
+            gender,
+          });
     const speechSpeed = normalizeSpeechSpeed(agent.speechSpeed);
     const ttsRate = speechSpeedToEdgeRate(speechSpeed);
 
@@ -141,26 +149,32 @@ export class VoiceService {
     const project = await this.loadProject(organizationId, projectId);
     this.assertVoiceActive(project);
 
-    const provider = resolveVoiceProvider(project.agent?.voiceProvider);
+    // Production default is env VOICE_PROVIDER (openai Realtime) — not per-row lock-in
+    const provider = resolveVoiceProvider();
     if (!provider.configured()) {
       throw new BadRequestException(
-        `Voice provider (${provider.id}) konfiqurasiya olunmayıb.`,
+        `Voice provider (${provider.id}) konfiqurasiya olunmayıb. OPENAI_API_KEY yoxlayın.`,
       );
     }
 
     const agent = project.agent!;
     const bundle = this.buildPromptBundle(project);
+    const engineId = defaultVoiceProviderId();
 
-    // Normalize persona to catalog (Leyla/Samir) if needed
-    if ((agent.persona || "").trim() !== bundle.persona) {
+    // Keep agent row aligned with active engine + catalog persona
+    const needsSync =
+      (agent.persona || "").trim() !== bundle.persona ||
+      agent.voiceProvider !== engineId ||
+      agent.voiceId !== bundle.ttsVoiceId ||
+      Boolean(agent.externalAgentId);
+    if (needsSync) {
       await this.prisma.agent.update({
         where: { projectId },
         data: {
           persona: bundle.persona,
-          voiceProvider: defaultVoiceProviderId(),
+          voiceProvider: engineId,
           voiceId: bundle.ttsVoiceId,
           externalAgentId: null,
-          greeting: null,
         },
       });
     }
@@ -174,19 +188,11 @@ export class VoiceService {
       systemPrompt: bundle.fullPrompt,
       firstMessage: bundle.firstMessage,
       voiceId: bundle.ttsVoiceId,
-      voiceProvider: agent.voiceProvider,
+      voiceProvider: engineId,
       temperature: bundle.temperature,
       maxTokens: bundle.maxTokens,
-      cachedExternalId: agent.externalAgentId,
+      cachedExternalId: null,
     });
-
-    // Clear any stale ElevenLabs remote agent id — we no longer use it
-    if (agent.externalAgentId) {
-      await this.prisma.agent.update({
-        where: { projectId },
-        data: { externalAgentId: null },
-      });
-    }
 
     return {
       provider: session.provider,
@@ -194,6 +200,9 @@ export class VoiceService {
       connectionType: session.transport,
       signedUrl: session.signedUrl,
       token: session.token,
+      /** Ephemeral Realtime key (alias for token) */
+      value: session.token,
+      client_secret: session.token ? { value: session.token } : undefined,
       agent_id: session.externalAgentId,
       projectId: project.id,
       projectName: project.name,
@@ -208,7 +217,10 @@ export class VoiceService {
       userPrompt: bundle.userInstruction,
       projectStatus: project.status,
       tools: [...AGENT_TOOL_NAMES],
-      engine: defaultVoiceProviderId(),
+      engine: session.provider || defaultVoiceProviderId(),
+      model: session.model,
+      sttModel: session.sttModel,
+      expiresAt: session.expiresAt,
     };
   }
 
@@ -221,7 +233,7 @@ export class VoiceService {
     const project = await this.loadProject(organizationId, projectId);
     this.assertVoiceActive(project);
     const bundle = this.buildPromptBundle(project);
-    const provider = resolveVoiceProvider(project.agent?.voiceProvider);
+    const provider = resolveVoiceProvider();
     const text = String(body?.text || bundle.firstMessage).trim();
     if (!text) throw new BadRequestException("Boş mətn");
     return provider.speak({
@@ -246,7 +258,7 @@ export class VoiceService {
     if (!userText) throw new BadRequestException("userText tələb olunur");
 
     const bundle = this.buildPromptBundle(project);
-    const provider = resolveVoiceProvider(project.agent?.voiceProvider);
+    const provider = resolveVoiceProvider();
     if (!provider.turn) {
       throw new BadRequestException("Bu voice provider turn dəstəkləmir");
     }

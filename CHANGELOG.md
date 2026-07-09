@@ -7,6 +7,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 ## [Unreleased]
 
 ### Changed
+- **OpenAI Realtime (mandatory default):** Voice Engine now uses OpenAI
+  speech-to-speech via WebRTC (`gpt-realtime-2.1` + `gpt-4o-transcribe` STT).
+  Target reply latency **1–2s**. All model/voice IDs are **env-only**
+  (`OPENAI_REALTIME_MODEL`, `OPENAI_STT_MODEL`, `OPENAI_TTS_MODEL`, …).
+  Barge-in via server VAD `interrupt_response`. Edge Neural kept as
+  `VOICE_PROVIDER=edge_neural` fallback.
 - **Admin prompts order:** Salamlama → User Prompt → System Prompt (fixed).
 - **Single Save:** one top «Yadda saxla» persists greeting, prompts, operator,
   phone, speech speed, and voice settings. Temperature / Max Tokens removed from UI.
@@ -20,11 +26,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
   auto company+name template. User Prompt is a silent instruction and is never
   TTS'd (even if it starts with «Salam…»).
 - **Voice Engine (ADR-0003):** ElevenLabs removed from the default path. New
-  `@aivoiceos/voice-engine` port with **Edge Neural** adapter — free Microsoft
-  neural TTS (`az-AZ-BanuNeural` / `az-AZ-BabekNeural`), browser Web Speech STT
-  (`az-AZ`), cheap OpenAI chat LLM. Transport: `pipeline` (no vendor realtime
-  socket). Swap providers without changing call orchestration.
-- Env: `VOICE_PROVIDER=edge_neural`, `VOICE_LLM_MODEL=gpt-4o-mini`.
+  `@aivoiceos/voice-engine` port with **OpenAI Realtime** primary adapter.
+- Env: `VOICE_PROVIDER=openai`, `OPENAI_REALTIME_MODEL=gpt-realtime-2.1`.
 
 ### Fixed
 - **Runtime `error_type` crash** (legacy ElevenLabs SDK path): patched

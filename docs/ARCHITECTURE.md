@@ -99,14 +99,15 @@ interface VoiceProvider {
 
 Adapters:
 
-- **Edge Neural (default, $0 TTS):** Microsoft neural `az-AZ` Banu/Babek via
-  `msedge-tts` + browser Web Speech STT + cheap chat LLM. Transport: `pipeline`.
+- **OpenAI Realtime (default, low latency):** WebRTC speech-to-speech
+  (`OPENAI_REALTIME_MODEL`, default `gpt-realtime-2.1`) + input transcription
+  (`OPENAI_STT_MODEL`) + voices (`marin` / `cedar`). Target 1–2s replies; barge-in.
+- **Edge Neural (fallback):** Microsoft neural Banu/Babek via `msedge-tts` when
+  `VOICE_PROVIDER=edge_neural`.
 - **Azure Speech (future paid SLA):** same Banu/Babek voices with commercial SLA.
-- **Local open (future):** self-hosted Whisper AZ + open TTS behind `local_open`.
 - **ElevenLabs:** not used (cost / lock-in).
 
-Selection is per-Project; the registry maps catalog ids onto the active adapter.
-See ADR-0003.
+All model IDs are env-driven — upgrade without code changes. See ADR-0003.
 
 ## 7. Telephony (port + adapters)
 

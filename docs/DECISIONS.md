@@ -28,36 +28,32 @@ history.
 - **Consequences:** Strong typing and structure; the current JS PoC is migrated
   incrementally. Slight ramp-up vs plain Express, justified by longevity.
 
-## ADR-0003 — Voice engine: provider-agnostic, Edge Neural default (no ElevenLabs)
+## ADR-0003 — Voice engine: OpenAI Realtime default (provider-agnostic port)
 
-- **Status:** Accepted
-- **Context:** Azerbaijani must be fluent and natural. ElevenLabs is paid, token-
-  heavy, and unsuitable for thousands of concurrent customers. The platform must
-  not depend on any single TTS vendor. Options compared:
+- **Status:** Accepted (OpenAI Realtime supersedes Edge Neural as production default)
+- **Context:** Call-center operators need **1–2s** reply latency. Multi-hop
+  browser STT → chat → TTS often took 8–10s. ElevenLabs is rejected (cost).
+  OpenAI Realtime provides speech-to-speech with built-in STT transcription,
+  barge-in (`interrupt_response`), and official TTS voices.
 
-  | Option | AZ quality | TTS cost | Latency | Notes |
-  |--------|------------|----------|---------|-------|
-  | **Edge Neural Banu/Babek** | High (native neural) | **$0** | Low | Same voices as Azure Speech |
-  | Azure Speech | Same Banu/Babek + SLA | Paid | Low | Future paid adapter |
-  | Local Whisper + open TTS | Good (ops-heavy) | Infra only | Higher | Future `local_open` |
-  | ElevenLabs | Good | High | Medium | **Rejected** (cost / lock-in) |
+  | Option | AZ quality | Latency | Cost | Verdict |
+  |--------|------------|---------|------|---------|
+  | **OpenAI Realtime** | High (multilingual) | **~1–2s** | Usage | **Production default** |
+  | Edge Neural Banu/Babek | Native AZ | Higher (pipeline) | $0 TTS | Dev/fallback |
+  | Azure Speech | Native AZ + SLA | Low | Paid | Future adapter |
+  | ElevenLabs | Good | Medium | High | **Rejected** |
 
 - **Decision:**
-  1. `VoiceProvider` port in `@aivoiceos/voice-engine` — swap adapters without
-     changing `VoiceService` / admin UI.
-  2. **Default adapter: `edge_neural`** — Microsoft Edge neural TTS
-     (`az-AZ-BanuNeural` / `az-AZ-BabekNeural`) via `msedge-tts`, browser Web
-     Speech STT (`az-AZ`), cheap OpenAI chat LLM (`gpt-4o-mini`).
-  3. Transport: `pipeline` (browser STT → API turn → TTS audio). No vendor
-     realtime WebSocket/WebRTC for the default path.
-  4. ElevenLabs is **disabled by policy**; requests fall back to `edge_neural`.
-  5. Future adapters (`azure`, `local_open`, `openai`) plug in behind the same port.
-- **Consequences:** $0 TTS at scale; native AZ voices; low lock-in; dialogue still
-  needs a cheap LLM key. Edge TTS is unofficial (same neural models as Azure);
-  for contractual SLA, swap to Azure Speech adapter without rewriting call flow.
-  Open-source SARA_TTS / MMS-TTS-az are future `local_open` options (GPU ops);
-  production default stays Edge Neural Banu/Babek with admin **speechSpeed**
-  (default 1.2x) and 96 kbps MP3 for clearer AZ pronunciation.
+  1. `VoiceProvider` port in `@aivoiceos/voice-engine`.
+  2. **Default: `openai`** — Realtime WebRTC via ephemeral `client_secrets`.
+  3. **All model IDs from env** (never hardcode in call paths):
+     `OPENAI_REALTIME_MODEL`, `OPENAI_STT_MODEL`, `OPENAI_TTS_MODEL`,
+     `OPENAI_CHAT_MODEL`, `OPENAI_VOICE` / `_FEMALE` / `_MALE`.
+  4. Server VAD: `silence_duration_ms≈400`, `interrupt_response=true` (barge-in).
+  5. `edge_neural` remains a free fallback when `VOICE_PROVIDER=edge_neural`.
+  6. ElevenLabs disabled by policy.
+- **Consequences:** Low-latency human-like calls; OpenAI usage cost; upgrade
+  models by changing env only. Edge Neural kept for offline/dev.
 
 ## ADR-0004 — Telephony for Azerbaijan: BYO local SIP trunk (e.g. DIDWW)
 

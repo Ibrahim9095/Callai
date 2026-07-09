@@ -125,6 +125,8 @@ export const api = {
       connectionType?: string;
       signedUrl?: string;
       token?: string;
+      value?: string;
+      client_secret?: { value?: string };
       agent_id?: string | null;
       projectId: string;
       projectName: string;
@@ -135,9 +137,13 @@ export const api = {
       companyName?: string;
       firstMessage: string;
       ttsVoiceId?: string;
+      speechSpeed?: number;
       userPrompt?: string | null;
       projectStatus?: string;
       tools: string[];
+      model?: string;
+      sttModel?: string;
+      expiresAt?: number | string | null;
     }>(`/projects/${pid}/voice/session`, { method: "POST", body: "{}" }),
   voiceSpeak: (pid: string, body: { text?: string }) =>
     request<{

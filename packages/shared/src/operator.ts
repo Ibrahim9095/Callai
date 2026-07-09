@@ -14,9 +14,8 @@ export interface OperatorPreset {
   /** Display + spoken name (exact). */
   name: string;
   gender: OperatorGender;
-  /** Default catalog voice for this operator. */
-  /** Catalog provider id — runtime maps azure → free edge_neural TTS. */
-  voiceProvider: "azure" | "edge_neural";
+  /** Default catalog voice for this operator (OpenAI Realtime by default). */
+  voiceProvider: "openai" | "edge_neural" | "azure";
   voiceId: string;
   label: string;
 }
@@ -30,16 +29,16 @@ export const OPERATOR_CATALOG: readonly OperatorPreset[] = [
     id: "leyla",
     name: "Leyla",
     gender: "female",
-    voiceProvider: "edge_neural",
-    voiceId: "az-AZ-BanuNeural",
+    voiceProvider: "openai",
+    voiceId: "marin",
     label: "Leyla — qadın",
   },
   {
     id: "samir",
     name: "Samir",
     gender: "male",
-    voiceProvider: "edge_neural",
-    voiceId: "az-AZ-BabekNeural",
+    voiceProvider: "openai",
+    voiceId: "cedar",
     label: "Samir — kişi",
   },
 ] as const;
