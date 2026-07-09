@@ -136,8 +136,7 @@ export class ProjectsService {
       dto.language !== undefined ||
       dto.voiceProvider !== undefined ||
       dto.voiceId !== undefined ||
-      dto.temperature !== undefined ||
-      dto.maxTokens !== undefined;
+      dto.speechSpeed !== undefined;
 
     const data: Record<string, unknown> = {};
 
@@ -146,8 +145,7 @@ export class ProjectsService {
     if (dto.language !== undefined) data.language = dto.language;
     if (dto.greeting !== undefined) data.greeting = dto.greeting;
     if (dto.active !== undefined) data.active = dto.active;
-    if (dto.temperature !== undefined) data.temperature = dto.temperature;
-    if (dto.maxTokens !== undefined) data.maxTokens = dto.maxTokens;
+    if (dto.speechSpeed !== undefined) data.speechSpeed = dto.speechSpeed;
 
     // Catalog only: Leyla | Samir
     if (dto.operatorId !== undefined || dto.persona !== undefined) {

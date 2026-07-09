@@ -64,6 +64,8 @@ export interface TurnRequest {
   voiceId: string;
   temperature?: number;
   maxTokens?: number | null;
+  /** SSML/Edge rate e.g. "+20%" */
+  rate?: string;
 }
 
 export interface TurnResult {

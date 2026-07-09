@@ -55,6 +55,9 @@ history.
 - **Consequences:** $0 TTS at scale; native AZ voices; low lock-in; dialogue still
   needs a cheap LLM key. Edge TTS is unofficial (same neural models as Azure);
   for contractual SLA, swap to Azure Speech adapter without rewriting call flow.
+  Open-source SARA_TTS / MMS-TTS-az are future `local_open` options (GPU ops);
+  production default stays Edge Neural Banu/Babek with admin **speechSpeed**
+  (default 1.2x) and 96 kbps MP3 for clearer AZ pronunciation.
 
 ## ADR-0004 — Telephony for Azerbaijan: BYO local SIP trunk (e.g. DIDWW)
 

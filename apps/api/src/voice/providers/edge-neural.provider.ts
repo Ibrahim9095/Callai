@@ -83,18 +83,17 @@ export class EdgeNeuralVoiceProvider implements VoiceProvider {
     const voiceId = resolveTtsVoiceId({ voiceId: req.voiceId });
     const tts = new MsEdgeTTS({ enableLogger: false });
     try {
-      // WEBM opus — small, browser-friendly
-      await tts.setMetadata(voiceId, OUTPUT_FORMAT.WEBM_24KHZ_16BIT_MONO_OPUS);
+      // Higher-bitrate MP3 — clearer AZ pronunciation, wider browser support
+      await tts.setMetadata(voiceId, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
       const { audioStream } = tts.toStream(text, {
-        // Natural call-center pace (slightly brisk, not rushed)
-        rate: req.rate || "+8%",
+        rate: req.rate || "+20%",
         pitch: "+0Hz",
         volume: "+0%",
       });
       const buf = await streamToBuffer(audioStream);
       return {
         audioBase64: buf.toString("base64"),
-        mimeType: "audio/webm;codecs=opus",
+        mimeType: "audio/mpeg",
         provider: this.id,
       };
     } finally {
@@ -157,7 +156,7 @@ export class EdgeNeuralVoiceProvider implements VoiceProvider {
     const spoken = await this.speak({
       text: replyText,
       voiceId: req.voiceId,
-      rate: "+8%",
+      rate: req.rate || "+20%",
     });
 
     return {

@@ -4,7 +4,14 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { api, getToken } from "@/lib/api";
-import { OPERATOR_CATALOG, resolveOperator, voiceForOperator } from "@aivoiceos/shared";
+import {
+  DEFAULT_SPEECH_SPEED,
+  OPERATOR_CATALOG,
+  SPEECH_SPEEDS,
+  normalizeSpeechSpeed,
+  resolveOperator,
+  voiceForOperator,
+} from "@aivoiceos/shared";
 
 function formatPhone(e164: string): string {
   const d = String(e164 || "").replace(/[^\d]/g, "").replace(/^994/, "");
@@ -20,14 +27,13 @@ export default function ProjectDetailPage() {
   const [project, setProject] = useState<any>(null);
   const [agent, setAgent] = useState<any>(null);
   const [operatorId, setOperatorId] = useState("leyla");
+  const [phoneInput, setPhoneInput] = useState("");
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [phoneInput, setPhoneInput] = useState("");
-  const [phoneBusy, setPhoneBusy] = useState(false);
 
   useEffect(() => {
     if (!getToken()) {
@@ -38,8 +44,12 @@ export default function ProjectDetailPage() {
       .project(id)
       .then((p) => {
         setProject(p);
-        setAgent(p.agent);
+        setAgent({
+          ...p.agent,
+          speechSpeed: normalizeSpeechSpeed(p.agent?.speechSpeed),
+        });
         setOperatorId(resolveOperator(p.agent?.persona).id);
+        setPhoneInput(p.phoneNumber?.e164 ? formatPhone(p.phoneNumber.e164) : "");
       })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
@@ -65,6 +75,24 @@ export default function ProjectDetailPage() {
     setSaved(false);
     try {
       const op = resolveOperator(operatorId);
+      const speed = normalizeSpeechSpeed(agent.speechSpeed ?? DEFAULT_SPEECH_SPEED);
+
+      // Persist phone if typed and different / missing
+      const typedPhone = phoneInput.trim();
+      if (typedPhone) {
+        const current = project.phoneNumber?.e164 || "";
+        const normalizedTyped = typedPhone.replace(/\s/g, "");
+        const normalizedCurrent = String(current).replace(/\s/g, "");
+        if (!current || normalizedTyped !== normalizedCurrent) {
+          try {
+            await api.assignPhone(id, typedPhone);
+          } catch (e: any) {
+            // Keep going for agent fields; surface phone error
+            setError(e.message || "Telefon saxlanılmadı");
+          }
+        }
+      }
+
       const updated = await api.updateAgent(id, {
         operatorId: op.id,
         persona: op.name,
@@ -73,13 +101,18 @@ export default function ProjectDetailPage() {
         language: agent.language || "az",
         voiceProvider: op.voiceProvider,
         voiceId: op.voiceId,
-        temperature: Number(agent.temperature ?? 0.45),
-        maxTokens: agent.maxTokens ? Number(agent.maxTokens) : null,
+        speechSpeed: speed,
         greeting: agent.greeting || "",
       });
       setProject(updated);
-      setAgent(updated.agent);
+      setAgent({
+        ...updated.agent,
+        speechSpeed: normalizeSpeechSpeed(updated.agent?.speechSpeed),
+      });
       setOperatorId(resolveOperator(updated.agent?.persona).id);
+      if (updated.phoneNumber?.e164) {
+        setPhoneInput(formatPhone(updated.phoneNumber.e164));
+      }
       setSaved(true);
       setDirty(false);
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -95,37 +128,25 @@ export default function ProjectDetailPage() {
     try {
       const updated = await api.setStatus(id, next);
       setProject(updated);
-      setAgent(updated.agent);
+      setAgent({
+        ...updated.agent,
+        speechSpeed: normalizeSpeechSpeed(updated.agent?.speechSpeed),
+      });
     } catch (e: any) {
       setError(e.message);
-    }
-  }
-
-  async function assignPhone() {
-    if (!phoneInput.trim()) return;
-    setPhoneBusy(true);
-    setError("");
-    try {
-      const updated = await api.assignPhone(id, phoneInput.trim());
-      setProject(updated);
-      setPhoneInput("");
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setPhoneBusy(false);
     }
   }
 
   async function removePhone() {
-    setPhoneBusy(true);
     setError("");
     try {
       const updated = await api.removePhone(id);
       setProject(updated);
+      setPhoneInput("");
+      setDirty(true);
+      setSaved(false);
     } catch (e: any) {
       setError(e.message);
-    } finally {
-      setPhoneBusy(false);
     }
   }
 
@@ -150,42 +171,56 @@ export default function ProjectDetailPage() {
   return (
     <>
       <div className="topbar">
-        <div className="brand">AI Voice <span>OS</span></div>
-        <Link href="/projects" className="back">← Layihələr</Link>
+        <div className="brand">
+          AI Voice <span>OS</span>
+        </div>
+        <Link href="/projects" className="back">
+          ← Layihələr
+        </Link>
       </div>
 
       <div className="container grid" style={{ gap: "1.2rem" }}>
-        <div className="row">
+        <div className="row" style={{ alignItems: "flex-start" }}>
           <div>
-            <h1 className="title" style={{ margin: 0 }}>{project.name}</h1>
+            <h1 className="title" style={{ margin: 0 }}>
+              {project.name}
+            </h1>
             <span className="muted">{project.businessTemplate}</span>
           </div>
           <div className="spacer" />
           <span className={`pill ${project.status}`}>
-            {project.status === "active" ? "Aktiv" : project.status === "paused" ? "Dayandırılıb" : "Qaralama"}
+            {project.status === "active"
+              ? "Aktiv"
+              : project.status === "paused"
+                ? "Dayandırılıb"
+                : "Qaralama"}
           </span>
-          <button className="btn" onClick={toggleStatus}>
+          <button className="btn" onClick={toggleStatus} type="button">
             {project.status === "active" ? "Deaktiv et" : "Aktiv et"}
           </button>
-          <button className="btn danger" onClick={removeProject} disabled={deleting}>
+          <button className="btn primary" onClick={() => void save()} disabled={saving} type="button">
+            {saving ? "Saxlanır…" : saved ? "Saxlanıldı ✓" : "Yadda saxla"}
+          </button>
+          <button className="btn danger" onClick={() => void removeProject()} disabled={deleting} type="button">
             {deleting ? "Silinir…" : "Sil"}
           </button>
         </div>
 
+        {saved ? (
+          <p style={{ color: "var(--ok)", margin: 0, fontWeight: 700 }}>
+            Yadda saxlanıldı ✓ — operator «{currentOp.name}» · {project.name}
+          </p>
+        ) : null}
+        {error ? (
+          <p className="error" style={{ margin: 0 }}>
+            {error}
+          </p>
+        ) : null}
+
         <section className="card grid">
-          <div className="row" style={{ alignItems: "flex-start" }}>
-            <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>AI Operator</h2>
-            <div className="spacer" />
-            <button className="btn primary" onClick={save} disabled={saving} style={{ minWidth: 140 }}>
-              {saving ? "Saxlanır…" : "Yadda saxla"}
-            </button>
-          </div>
-          {saved ? (
-            <p style={{ color: "var(--ok)", margin: 0, fontWeight: 700 }}>
-              Yadda saxlanıldı ✓ — zəngdə: «{currentOp.name}» · {project.name}
-            </p>
-          ) : null}
-          {error ? <p className="error" style={{ margin: 0 }}>{error}</p> : null}
+          <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>
+            AI Operator
+          </h2>
 
           <div>
             <label>Operator</label>
@@ -207,8 +242,7 @@ export default function ProjectDetailPage() {
               ))}
             </div>
             <p className="hint" style={{ marginBottom: 0 }}>
-              Hazırda yalnız <b>Leyla</b> və <b>Samir</b>. Seçin → <b>Yadda saxla</b> → Test zəng.
-              Salamda şirkət adı («{project.name}») + operator adı çıxacaq.
+              Yalnız <b>Leyla</b> və <b>Samir</b>. Yuxarıdakı <b>Yadda saxla</b> hər şeyi saxlayır.
             </p>
           </div>
 
@@ -230,35 +264,28 @@ export default function ProjectDetailPage() {
               </select>
             </div>
             <div>
-              <label>Səs (avtomatik)</label>
-              <input
-                readOnly
-                value={
-                  currentOp.gender === "female"
-                    ? "Qadın səs — Leyla"
-                    : "Kişi səs — Samir"
-                }
-              />
-              <p className="hint">Səs operatora bağlıdır; əl ilə dəyişilmir.</p>
+              <label>Danışıq sürəti (Speech Speed)</label>
+              <select
+                value={String(normalizeSpeechSpeed(agent.speechSpeed))}
+                onChange={(e) => {
+                  setSaved(false);
+                  setDirty(true);
+                  setAgent({ ...agent, speechSpeed: Number(e.target.value) });
+                }}
+              >
+                {SPEECH_SPEEDS.map((s) => (
+                  <option key={s} value={s}>
+                    {s.toFixed(1)}x{s === 1.2 ? " (Standart)" : s === 1.0 ? " (Normal)" : ""}
+                  </option>
+                ))}
+              </select>
+              <p className="hint">1.2x tövsiyə olunur — təbii call-center tempi.</p>
             </div>
           </div>
 
+          {/* Order: Salamlama → User Prompt → System Prompt */}
           <div>
-            <label>System Prompt (dəyişməz qaydalar)</label>
-            <textarea
-              value={agent.prompt || ""}
-              onChange={(e) => {
-                setSaved(false);
-                setDirty(true);
-                setAgent({ ...agent, prompt: e.target.value });
-              }}
-              placeholder="Biznes qaydaları, ton, məhsul siyasəti…"
-              rows={5}
-            />
-          </div>
-
-          <div>
-            <label>Salamlama (zəng açılınca SƏSLƏNİR)</label>
+            <label>1. Salamlama (Greeting) — zəng açılınca SƏSLƏNİR</label>
             <textarea
               value={agent.greeting || ""}
               onChange={(e) => {
@@ -269,13 +296,11 @@ export default function ProjectDetailPage() {
               placeholder={`Boş buraxın → avtomatik: «Salam. ${project?.name || "Şirkət"}-dən mən ${currentOp.name}${currentOp.id === "leyla" ? "yam" : "əm"}. Buyurun…»`}
               rows={2}
             />
-            <p className="hint">
-              Yalnız bu mətn (və ya avtomatik salam) səslənir. Operator adını daxil edin.
-            </p>
+            <p className="hint">AI-nin ilk cümləsi. Operator adını daxil edin.</p>
           </div>
 
           <div>
-            <label>User Prompt (səssiz təlimat — SƏSLƏNMİR)</label>
+            <label>2. User Prompt — danışıq tərzi və davranış</label>
             <textarea
               value={agent.userPrompt || ""}
               onChange={(e) => {
@@ -283,140 +308,98 @@ export default function ProjectDetailPage() {
                 setDirty(true);
                 setAgent({ ...agent, userPrompt: e.target.value });
               }}
-              placeholder="Məs: Bu gün yeni kampaniyanı ilk olaraq müştəriyə təqdim et."
-              rows={3}
+              placeholder="Məs: Bu gün yeni kampaniyanı ilk olaraq müştəriyə təqdim et. Mehriban və səbirli ol."
+              rows={4}
             />
             <p className="hint">
-              AI-yə daxili göstərişdir. «Salam mən Leylayam…» yazmayın — o Salamlama sahəsinə aiddir.
+              Səssiz təlimatdır — səslənmir. «Salam mən …yam» yazmayın (o Salamlama sahəsinə aiddir).
             </p>
           </div>
 
-          <div className="grid cols-2">
-            <div>
-              <label>Temperature (0–1)</label>
-              <input
-                type="number"
-                min={0}
-                max={1}
-                step={0.05}
-                value={agent.temperature ?? 0.45}
-                onChange={(e) => {
-                  setSaved(false);
-                  setDirty(true);
-                  setAgent({ ...agent, temperature: Number(e.target.value) });
-                }}
-              />
-            </div>
-            <div>
-              <label>Max Tokens (boş = default)</label>
-              <input
-                type="number"
-                min={64}
-                max={4096}
-                step={32}
-                value={agent.maxTokens ?? ""}
-                onChange={(e) => {
-                  setSaved(false);
-                  setDirty(true);
-                  setAgent({
-                    ...agent,
-                    maxTokens: e.target.value === "" ? null : Number(e.target.value),
-                  });
-                }}
-                placeholder="məs. 512"
-              />
-            </div>
+          <div>
+            <label>3. System Prompt — sistem səviyyəsində texniki qaydalar</label>
+            <textarea
+              value={agent.prompt || ""}
+              onChange={(e) => {
+                setSaved(false);
+                setDirty(true);
+                setAgent({ ...agent, prompt: e.target.value });
+              }}
+              placeholder="Biznes qaydaları, məhsul siyasəti, məlumat mənbəyi…"
+              rows={6}
+            />
           </div>
 
           <div>
-            <label>Voice Settings</label>
-            <input
-              readOnly
-              value={`${currentOp.name} · ${currentOp.gender === "female" ? "qadın" : "kişi"} səs · call-center tempo`}
-            />
-            <p className="hint">Səs operatora bağlıdır. Memory / Knowledge — Data bölməsindən.</p>
-          </div>
-
-          <button
-            className="btn primary"
-            onClick={save}
-            disabled={saving}
-            style={{ width: "100%", fontSize: "1.05rem", padding: "0.9rem" }}
-          >
-            {saving ? "Yadda saxlanılır…" : "Yadda saxla"}
-          </button>
-        </section>
-
-        <div className="save-bar">
-          <div className="save-bar-inner">
-            <span className="muted" style={{ fontSize: "0.85rem" }}>
-              Operator: <b style={{ color: "var(--ink)" }}>{currentOp.name}</b>
-            </span>
-            <button className="btn primary" onClick={save} disabled={saving}>
-              {saving ? "…" : saved ? "Saxlanıldı ✓" : "Yadda saxla"}
-            </button>
-          </div>
-        </div>
-
-        <section className="card grid">
-          <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Telefon nömrəsi</h2>
-          {project.phoneNumber ? (
-            <div className="row">
-              <div>
-                <div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{formatPhone(project.phoneNumber.e164)}</div>
-                <small className="muted">
-                  {project.phoneNumber.operator || "Operator naməlum"} ·{" "}
-                  {project.phoneNumber.status === "active" ? "Aktiv (routing)" : "Təyin olunub (routing gözləyir)"}
-                </small>
-              </div>
-              <div className="spacer" />
-              <button className="btn danger" onClick={removePhone} disabled={phoneBusy}>
-                Nömrəni sil
-              </button>
-            </div>
-          ) : (
-            <div>
-              <label>Azərbaycan nömrəsi təyin et</label>
-              <div className="row">
-                <input
-                  style={{ flex: 1, minWidth: 200 }}
-                  value={phoneInput}
-                  onChange={(e) => setPhoneInput(e.target.value)}
-                  placeholder="050 123 45 67  və ya  +994 50 123 45 67"
-                />
-                <button className="btn primary" onClick={assignPhone} disabled={phoneBusy}>
-                  {phoneBusy ? "…" : "Təyin et"}
+            <label>Telefon nömrəsi</label>
+            {project.phoneNumber ? (
+              <div className="row" style={{ marginBottom: "0.5rem" }}>
+                <div>
+                  <div style={{ fontSize: "1.05rem", fontWeight: 700 }}>
+                    {formatPhone(project.phoneNumber.e164)}
+                  </div>
+                  <small className="muted">
+                    {project.phoneNumber.operator || "Operator naməlum"} ·{" "}
+                    {project.phoneNumber.status === "active"
+                      ? "Aktiv (routing)"
+                      : "Təyin olunub (routing gözləyir)"}
+                  </small>
+                </div>
+                <div className="spacer" />
+                <button className="btn danger" onClick={() => void removePhone()} type="button">
+                  Nömrəni sil
                 </button>
               </div>
-              <p className="hint">
-                Azercell / Bakcell / Nar / şəhər nömrəsi. Canlı yönləndirmə SIP qoşulduqdan sonra.
-              </p>
-            </div>
-          )}
+            ) : null}
+            <input
+              value={phoneInput}
+              onChange={(e) => {
+                setPhoneInput(e.target.value);
+                setDirty(true);
+                setSaved(false);
+              }}
+              placeholder="050 123 45 67  və ya  +994 50 123 45 67"
+            />
+            <p className="hint">Yuxarıdakı Yadda saxla ilə birlikdə saxlanır.</p>
+          </div>
+
+          <div>
+            <label>Səs</label>
+            <input
+              readOnly
+              value={`${currentOp.name} · ${currentOp.gender === "female" ? "qadın" : "kişi"} · ${normalizeSpeechSpeed(agent.speechSpeed).toFixed(1)}x · neural AZ`}
+            />
+          </div>
         </section>
 
         <section className="card">
           <div className="row">
             <div>
-              <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Bilik bazası / Data</h2>
+              <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>
+                Bilik bazası / Data
+              </h2>
               <p className="muted" style={{ margin: "0.3rem 0 0" }}>
                 Layihənin datası. Agent zəngdə buradan cavab verəcək.
               </p>
             </div>
             <div className="spacer" />
-            <Link className="btn primary" href={`/projects/${id}/data`}>Datanı idarə et →</Link>
+            <Link className="btn primary" href={`/projects/${id}/data`}>
+              Datanı idarə et →
+            </Link>
           </div>
         </section>
 
         <section className="card">
           <div className="row">
             <div>
-              <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>Test zəng (voice)</h2>
-            <p className="muted" style={{ margin: "0.3rem 0 0" }}>
-              {project.status === "active"
-                ? `Peşəkar CallAI interfeysi açılacaq. Salam: şirkət + «${currentOp.name}» (User Prompt səslənmir).`
-                : "Layihə deaktivdir — əvvəl «Aktiv et», sonra Test zəng."}
-            </p>
+              <h2 className="title" style={{ fontSize: "1.1rem", margin: 0 }}>
+                Test zəng (voice)
+              </h2>
+              <p className="muted" style={{ margin: "0.3rem 0 0" }}>
+                {project.status === "active"
+                  ? `CallAI interfeysi · barge-in · ${normalizeSpeechSpeed(agent.speechSpeed).toFixed(1)}x`
+                  : "Layihə deaktivdir — əvvəl «Aktiv et», sonra Test zəng."}
+              </p>
             </div>
             <div className="spacer" />
             <Link
@@ -425,7 +408,7 @@ export default function ProjectDetailPage() {
               onClick={(e) => {
                 if (dirty) {
                   const ok = window.confirm(
-                    "Son dəyişikliyi hələ «Yadda saxla» etməmisiniz — zəngdə köhnə operator qala bilər. Yenə də keçilsin?",
+                    "Son dəyişikliyi hələ «Yadda saxla» etməmisiniz. Yenə də keçilsin?",
                   );
                   if (!ok) e.preventDefault();
                 }

@@ -8,7 +8,9 @@ import {
   buildCallGreeting,
   buildIdentityPrompt,
   getBusinessTemplate,
+  normalizeSpeechSpeed,
   resolveOperator,
+  speechSpeedToEdgeRate,
 } from "@aivoiceos/shared";
 import { PrismaService } from "../prisma/prisma.service";
 import { KnowledgeService } from "../knowledge/knowledge.service";
@@ -63,6 +65,7 @@ export class VoiceService {
       userPrompt?: string | null;
       greeting?: string | null;
       voiceId: string;
+      speechSpeed?: number | null;
       temperature?: number | null;
       maxTokens?: number | null;
     };
@@ -77,6 +80,8 @@ export class VoiceService {
       voiceId: agent.voiceId || operator.voiceId,
       gender,
     });
+    const speechSpeed = normalizeSpeechSpeed(agent.speechSpeed);
+    const ttsRate = speechSpeedToEdgeRate(speechSpeed);
 
     // Spoken greeting comes ONLY from agent.greeting or auto company+name template.
     // User Prompt is never used as spoken text.
@@ -124,8 +129,11 @@ export class VoiceService {
       firstMessage,
       fullPrompt,
       userInstruction,
-      temperature: agent.temperature ?? 0.45,
-      maxTokens: agent.maxTokens ?? null,
+      speechSpeed,
+      ttsRate,
+      // Internal LLM knobs (not exposed in admin)
+      temperature: agent.temperature ?? 0.35,
+      maxTokens: agent.maxTokens ?? 140,
     };
   }
 
@@ -196,6 +204,7 @@ export class VoiceService {
       operatorGender: bundle.gender,
       firstMessage: bundle.firstMessage,
       ttsVoiceId: session.ttsVoiceId,
+      speechSpeed: bundle.speechSpeed,
       userPrompt: bundle.userInstruction,
       projectStatus: project.status,
       tools: [...AGENT_TOOL_NAMES],
@@ -218,7 +227,7 @@ export class VoiceService {
     return provider.speak({
       text,
       voiceId: bundle.ttsVoiceId,
-      rate: "+8%",
+      rate: bundle.ttsRate,
     });
   }
 
@@ -249,6 +258,7 @@ export class VoiceService {
       voiceId: bundle.ttsVoiceId,
       temperature: bundle.temperature,
       maxTokens: bundle.maxTokens,
+      rate: bundle.ttsRate,
     });
   }
 

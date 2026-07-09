@@ -141,10 +141,12 @@ model Agent {
   language        String   @default("az")
   voiceProvider   String   @default("edge_neural")
   voiceId         String   @default("az-AZ-BanuNeural")
-  /// LLM temperature 0–1 (voice agent)
-  temperature     Float    @default(0.45)
-  /// Optional max tokens for agent replies (null = provider default)
+  /// LLM temperature 0–1 (internal; not shown in admin)
+  temperature     Float    @default(0.35)
+  /// Optional max tokens (internal; not shown in admin)
   maxTokens       Int?
+  /// Spoken pace multiplier: 0.8 | 1.0 | 1.2 | 1.4 | 1.6 (default 1.2 — natural call-center)
+  speechSpeed     Float    @default(1.2)
   /// Cached remote provider agent id (optional; unused by pipeline providers)
   externalAgentId String?
   greeting        String?

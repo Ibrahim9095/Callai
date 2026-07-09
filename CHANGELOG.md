@@ -7,6 +7,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/); versioning per
 ## [Unreleased]
 
 ### Changed
+- **Admin prompts order:** Salamlama → User Prompt → System Prompt (fixed).
+- **Single Save:** one top «Yadda saxla» persists greeting, prompts, operator,
+  phone, speech speed, and voice settings. Temperature / Max Tokens removed from UI.
+- **Speech Speed:** admin control 0.8x–1.6x (default **1.2x**); wired to Edge TTS rate.
+- **Mic + barge-in:** STT stays live during TTS; user speech stops AI immediately.
+- **TTS quality:** 96 kbps MP3 Banu/Babek; operator behaviour rules (mehriban,
+  nəzakətli, peşəkar, səbirli, empatik) baked into voice style.
 - **Call UI:** Admin «Test zəng» opens the professional CallAI interface
   (legacy orb / Fraunces+Manrope layout) — same look as the original AI Agent Voice.
 - **Salamlama vs User Prompt:** Spoken greeting is ONLY `agent.greeting` or the

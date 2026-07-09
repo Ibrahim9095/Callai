@@ -1,12 +1,11 @@
 /**
- * Professional CallAI voice call UI (ported from legacy client).
+ * Professional CallAI voice call UI.
  *
- * Transport: pipeline
- *   STT  = Web Speech API (az-AZ, free)
- *   LLM  = cheap chat model via API
- *   TTS  = Edge neural az-AZ Banu/Babek (free)
- *
- * Spoken greeting = session.firstMessage ONLY (never User Prompt).
+ * Mic + barge-in:
+ * - SpeechRecognition runs continuously while the call is live (including during TTS).
+ * - Any user speech while AI is talking immediately stops playback (barge-in).
+ * - Level meter uses AnalyserNode without holding a second exclusive mic stream
+ *   that would starve STT on mobile.
  */
 
 "use client";
@@ -26,12 +25,6 @@ type Phase =
   | "error";
 
 type Line = { id: string; role: "user" | "assistant" | "system"; text: string };
-type ToolRow = {
-  id: string;
-  name: string;
-  status: "running" | "done" | "error";
-  args?: Record<string, unknown>;
-};
 type HistoryItem = { role: "user" | "assistant"; content: string };
 
 const STATUS_LABELS: Record<Phase, string> = {
@@ -43,6 +36,13 @@ const STATUS_LABELS: Record<Phase, string> = {
   tool: "Yoxlayır…",
   error: "Xəta",
 };
+
+const BARGE_ACK = [
+  "Buyurun, sizi dinləyirəm.",
+  "Bəli, buyurun.",
+  "Aydındır, davam edin.",
+  "Başa düşdüm.",
+];
 
 function uid() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -66,42 +66,43 @@ function getSpeechRecognitionCtor(): (new () => SpeechRecognition) | null {
   return w.SpeechRecognition || w.webkitSpeechRecognition || null;
 }
 
-function labelTool(name: string) {
-  const map: Record<string, string> = {
-    list_collections: "Kolleksiyalar",
-    search_records: "Axtarış",
-    create_record: "Yazı yaratma",
-    update_record: "Yazı yeniləmə",
-  };
-  return map[name] || name;
-}
-
 async function playBase64Audio(
   audioBase64: string,
   mimeType: string,
   audioRef: { current: HTMLAudioElement | null },
-): Promise<void> {
-  if (!audioBase64) return;
+  onPlaying?: () => void,
+): Promise<"finished" | "interrupted"> {
+  if (!audioBase64) return "finished";
   if (audioRef.current) {
     audioRef.current.pause();
     audioRef.current.src = "";
     audioRef.current = null;
   }
   const bytes = Uint8Array.from(atob(audioBase64), (c) => c.charCodeAt(0));
-  const blob = new Blob([bytes], { type: mimeType || "audio/webm" });
+  const blob = new Blob([bytes], { type: mimeType || "audio/mpeg" });
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
   audioRef.current = audio;
-  await new Promise<void>((resolve, reject) => {
-    audio.onended = () => {
+  onPlaying?.();
+
+  return new Promise<"finished" | "interrupted">((resolve) => {
+    let settled = false;
+    const finish = (result: "finished" | "interrupted") => {
+      if (settled) return;
+      settled = true;
       URL.revokeObjectURL(url);
-      resolve();
+      if (audioRef.current === audio) audioRef.current = null;
+      resolve(result);
     };
-    audio.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("Audio oxunmadı"));
+    audio.onended = () => finish("finished");
+    audio.onerror = () => finish("finished");
+    audio.onpause = () => {
+      // Barge-in pauses/stops mid-play
+      if (!audio.ended && audio.currentTime > 0 && audio.paused) {
+        finish("interrupted");
+      }
     };
-    void audio.play().catch(reject);
+    void audio.play().catch(() => finish("finished"));
   });
 }
 
@@ -115,11 +116,11 @@ export default function TestCallPage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [error, setError] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
-  const [tools, setTools] = useState<ToolRow[]>([]);
   const [muted, setMuted] = useState(false);
   const [level, setLevel] = useState(0);
   const [engineLabel, setEngineLabel] = useState("edge_neural");
   const [connected, setConnected] = useState(false);
+  const [interim, setInterim] = useState("");
 
   const logRef = useRef<HTMLDivElement | null>(null);
   const aliveRef = useRef(true);
@@ -130,12 +131,16 @@ export default function TestCallPage() {
   const playbackRef = useRef<HTMLAudioElement | null>(null);
   const processingRef = useRef(false);
   const mutedRef = useRef(false);
-  const meterRef = useRef<{
-    ctx: AudioContext;
-    analyser: AnalyserNode;
-    stream: MediaStream;
-  } | null>(null);
+  const speakingRef = useRef(false);
+  const bargeInRef = useRef(false);
+  const pendingFinalRef = useRef("");
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const meterCtxRef = useRef<AudioContext | null>(null);
   const rafRef = useRef(0);
+  const handleUtteranceRef = useRef<(generation: number, text: string) => Promise<void>>(
+    async () => undefined,
+  );
 
   useEffect(() => {
     aliveRef.current = true;
@@ -161,41 +166,36 @@ export default function TestCallPage() {
 
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [lines, tools]);
+  }, [lines, interim]);
+
+  const stopPlayback = useCallback(() => {
+    if (playbackRef.current) {
+      try {
+        playbackRef.current.pause();
+        playbackRef.current.src = "";
+      } catch {
+        /* ignore */
+      }
+      playbackRef.current = null;
+    }
+    speakingRef.current = false;
+  }, []);
 
   const stopMeter = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     rafRef.current = 0;
-    if (meterRef.current) {
-      meterRef.current.stream.getTracks().forEach((t) => t.stop());
-      void meterRef.current.ctx.close().catch(() => undefined);
-      meterRef.current = null;
+    if (meterCtxRef.current) {
+      void meterCtxRef.current.close().catch(() => undefined);
+      meterCtxRef.current = null;
     }
     setLevel(0);
   }, []);
 
-  const startMeter = useCallback(async () => {
+  const stopMic = useCallback(() => {
     stopMeter();
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new Ctx();
-      if (ctx.state === "suspended") await ctx.resume();
-      const source = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 256;
-      source.connect(analyser);
-      meterRef.current = { ctx, analyser, stream };
-      const data = new Uint8Array(analyser.frequencyBinCount);
-      const tick = () => {
-        analyser.getByteFrequencyData(data);
-        const avg = data.reduce((a, b) => a + b, 0) / data.length / 255;
-        setLevel(avg);
-        rafRef.current = requestAnimationFrame(tick);
-      };
-      tick();
-    } catch {
-      /* meter optional */
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
     }
   }, [stopMeter]);
 
@@ -207,19 +207,17 @@ export default function TestCallPage() {
         rec.onresult = null;
         rec.onerror = null;
         rec.onend = null;
-        rec.stop();
+        rec.abort();
       } catch {
         /* ignore */
       }
     }
-  }, []);
-
-  const stopPlayback = useCallback(() => {
-    if (playbackRef.current) {
-      playbackRef.current.pause();
-      playbackRef.current.src = "";
-      playbackRef.current = null;
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
     }
+    pendingFinalRef.current = "";
+    setInterim("");
   }, []);
 
   const hangup = useCallback(async () => {
@@ -227,12 +225,16 @@ export default function TestCallPage() {
     sessionGenerationRef.current += 1;
     stopRecognition();
     stopPlayback();
-    stopMeter();
+    stopMic();
     setConnected(false);
     setMuted(false);
     mutedRef.current = false;
+    speakingRef.current = false;
+    bargeInRef.current = false;
+    processingRef.current = false;
     setPhase("idle");
-  }, [stopMeter, stopPlayback, stopRecognition]);
+    setInterim("");
+  }, [stopMic, stopPlayback, stopRecognition]);
 
   useEffect(() => {
     return () => {
@@ -240,16 +242,14 @@ export default function TestCallPage() {
       inCallRef.current = false;
       sessionGenerationRef.current += 1;
       try {
-        recognitionRef.current?.stop();
+        recognitionRef.current?.abort();
       } catch {
         /* ignore */
       }
       if (playbackRef.current) playbackRef.current.pause();
       cancelAnimationFrame(rafRef.current);
-      if (meterRef.current) {
-        meterRef.current.stream.getTracks().forEach((t) => t.stop());
-        void meterRef.current.ctx.close().catch(() => undefined);
-      }
+      if (meterCtxRef.current) void meterCtxRef.current.close().catch(() => undefined);
+      if (micStreamRef.current) micStreamRef.current.getTracks().forEach((t) => t.stop());
     };
   }, []);
 
@@ -258,6 +258,57 @@ export default function TestCallPage() {
     setLines((prev) => [...prev.slice(-40), { ...line, id: uid() }]);
   }
 
+  /** Soft visual meter from the SAME mic stream used for permission (not exclusive lock). */
+  const startMeterFromStream = useCallback(
+    (stream: MediaStream) => {
+      stopMeter();
+      try {
+        const Ctx =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new Ctx();
+        meterCtxRef.current = ctx;
+        if (ctx.state === "suspended") void ctx.resume();
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        const tick = () => {
+          analyser.getByteFrequencyData(data);
+          const avg = data.reduce((a, b) => a + b, 0) / data.length / 255;
+          setLevel(avg);
+          rafRef.current = requestAnimationFrame(tick);
+        };
+        tick();
+      } catch {
+        /* optional */
+      }
+    },
+    [stopMeter],
+  );
+
+  const interruptSpeaking = useCallback(() => {
+    if (!speakingRef.current && !playbackRef.current) return;
+    bargeInRef.current = true;
+    stopPlayback();
+    speakingRef.current = false;
+    if (aliveRef.current) setPhase("listening");
+  }, [stopPlayback]);
+
+  const flushPendingUtterance = useCallback(
+    (generation: number) => {
+      const text = pendingFinalRef.current.trim();
+      pendingFinalRef.current = "";
+      setInterim("");
+      if (!text) return;
+      if (!inCallRef.current || sessionGenerationRef.current !== generation) return;
+      if (processingRef.current || mutedRef.current) return;
+      void handleUtteranceRef.current(generation, text);
+    },
+    [],
+  );
+
   const startListening = useCallback(
     (generation: number) => {
       if (!inCallRef.current || sessionGenerationRef.current !== generation) return;
@@ -265,6 +316,14 @@ export default function TestCallPage() {
         if (aliveRef.current) setPhase("listening");
         return;
       }
+      // Already running
+      if (recognitionRef.current) {
+        if (aliveRef.current && !speakingRef.current && !processingRef.current) {
+          setPhase("listening");
+        }
+        return;
+      }
+
       const Ctor = getSpeechRecognitionCtor();
       if (!Ctor) {
         setError("Brauzer nitq tanımanı dəstəkləmir. Chrome / Edge istifadə edin.");
@@ -272,72 +331,105 @@ export default function TestCallPage() {
         return;
       }
 
-      stopRecognition();
       const rec = new Ctor();
       recognitionRef.current = rec;
       rec.lang = "az-AZ";
       rec.continuous = true;
-      rec.interimResults = false;
+      rec.interimResults = true;
       rec.maxAlternatives = 1;
 
       rec.onresult = (event: SpeechRecognitionEvent) => {
         if (!inCallRef.current || sessionGenerationRef.current !== generation) return;
-        if (processingRef.current || mutedRef.current) return;
+        if (mutedRef.current || processingRef.current) return;
 
-        let finalText = "";
+        let interimText = "";
+        let finalChunk = "";
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const r = event.results[i];
-          if (r.isFinal) finalText += r[0]?.transcript || "";
+          const t = (r[0]?.transcript || "").trim();
+          if (!t) continue;
+          if (r.isFinal) finalChunk += (finalChunk ? " " : "") + t;
+          else interimText += (interimText ? " " : "") + t;
         }
-        finalText = finalText.trim();
-        if (!finalText) return;
-        void handleUserUtterance(generation, finalText);
+
+        // Barge-in: any speech while AI talks → stop TTS immediately
+        if ((interimText || finalChunk) && speakingRef.current) {
+          interruptSpeaking();
+        }
+
+        if (interimText) setInterim(interimText);
+
+        if (finalChunk) {
+          pendingFinalRef.current = `${pendingFinalRef.current} ${finalChunk}`.trim();
+          setInterim("");
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          // Short pause after final → send turn (allows multi-phrase)
+          silenceTimerRef.current = setTimeout(() => {
+            flushPendingUtterance(generation);
+          }, 650);
+        }
       };
 
       rec.onerror = (ev: SpeechRecognitionErrorEvent) => {
         if (ev.error === "no-speech" || ev.error === "aborted") return;
         if (ev.error === "not-allowed") {
-          setError("Mikrofon icazəsi lazımdır.");
+          setError("Mikrofon icazəsi lazımdır. Brauzerdə mikrofonu açın.");
           setPhase("error");
           inCallRef.current = false;
           setConnected(false);
+          return;
         }
+        // network / other — soft restart below via onend
       };
 
       rec.onend = () => {
+        recognitionRef.current = null;
         if (
           inCallRef.current &&
           sessionGenerationRef.current === generation &&
-          !processingRef.current &&
           !mutedRef.current
         ) {
-          try {
-            rec.start();
-          } catch {
-            /* already started */
-          }
+          // Keep STT alive for the whole call
+          setTimeout(() => {
+            if (
+              inCallRef.current &&
+              sessionGenerationRef.current === generation &&
+              !recognitionRef.current
+            ) {
+              startListening(generation);
+            }
+          }, 120);
         }
       };
 
       try {
         rec.start();
-        if (aliveRef.current) setPhase("listening");
+        if (aliveRef.current && !speakingRef.current && !processingRef.current) {
+          setPhase("listening");
+        }
       } catch (e: unknown) {
-        setError(errMessage(e) || "Dinləmə başladıla bilmədi");
-        setPhase("error");
+        recognitionRef.current = null;
+        // InvalidStateError = already started — ignore
+        const msg = errMessage(e);
+        if (!/already started|InvalidState/i.test(msg)) {
+          setError(msg || "Dinləmə başladıla bilmədi");
+          setPhase("error");
+        }
       }
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stopRecognition],
+    [flushPendingUtterance, interruptSpeaking],
   );
 
-  async function handleUserUtterance(generation: number, userText: string) {
+  handleUtteranceRef.current = async (generation: number, userText: string) => {
     if (processingRef.current) return;
     if (!inCallRef.current || sessionGenerationRef.current !== generation) return;
     processingRef.current = true;
-    stopRecognition();
+    bargeInRef.current = false;
+    stopPlayback();
+    speakingRef.current = false;
     pushLine({ role: "user", text: userText });
     setPhase("thinking");
+    setInterim("");
 
     try {
       const result = await api.voiceTurn(pid, {
@@ -353,10 +445,33 @@ export default function TestCallPage() {
       ];
       pushLine({ role: "assistant", text: result.replyText });
       setPhase("speaking");
-      await playBase64Audio(result.audioBase64, result.mimeType, playbackRef);
+      speakingRef.current = true;
+      bargeInRef.current = false;
+
+      // Keep STT running during TTS for barge-in
+      startListening(generation);
+
+      const outcome = await playBase64Audio(
+        result.audioBase64,
+        result.mimeType,
+        playbackRef,
+        () => {
+          speakingRef.current = true;
+        },
+      );
+
+      speakingRef.current = false;
+      if (outcome === "interrupted" && bargeInRef.current) {
+        // Optional soft ack is skipped — user is already speaking; wait for their final
+        if (aliveRef.current) setPhase("listening");
+      } else if (inCallRef.current && sessionGenerationRef.current === generation) {
+        setPhase("listening");
+      }
     } catch (e: unknown) {
+      speakingRef.current = false;
       if (sessionGenerationRef.current === generation && aliveRef.current) {
         pushLine({ role: "system", text: `Cavab alınmadı: ${errMessage(e)}` });
+        setPhase("listening");
       }
     } finally {
       processingRef.current = false;
@@ -364,24 +479,27 @@ export default function TestCallPage() {
         startListening(generation);
       }
     }
-  }
+  };
 
   async function startCall() {
     processingRef.current = false;
     sessionGenerationRef.current += 1;
     const generation = sessionGenerationRef.current;
     historyRef.current = [];
+    pendingFinalRef.current = "";
+    bargeInRef.current = false;
+    speakingRef.current = false;
 
     stopRecognition();
     stopPlayback();
-    stopMeter();
+    stopMic();
     setError("");
     setLines([]);
-    setTools([]);
     setMuted(false);
     mutedRef.current = false;
     setPhase("connecting");
     setConnected(true);
+    setInterim("");
     pushLine({ role: "system", text: "Zəng bağlanır…" });
 
     try {
@@ -415,13 +533,21 @@ export default function TestCallPage() {
     }
 
     try {
-      await startMeter();
+      // Single mic permission — keep stream alive for meter; STT uses browser speech service
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      micStreamRef.current = stream;
+      startMeterFromStream(stream);
 
       const session = await api.voiceSession(pid);
       if (sessionGenerationRef.current !== generation || !aliveRef.current) return;
 
       const spokenGreeting = String(session.firstMessage || "").trim();
-      // Hard guard: never speak userPrompt
       if (session.userPrompt && spokenGreeting === session.userPrompt.trim()) {
         throw new Error("Salamlama konfiqurasiya xətası — User Prompt səslənməməlidir.");
       }
@@ -432,22 +558,41 @@ export default function TestCallPage() {
       setEngineLabel(session.engine || session.provider || "edge_neural");
 
       inCallRef.current = true;
+
+      // Start STT BEFORE greeting so barge-in works from the first second
+      startListening(generation);
+
       if (spokenGreeting) {
         pushLine({ role: "assistant", text: spokenGreeting });
         historyRef.current = [{ role: "assistant", content: spokenGreeting }];
       }
 
       setPhase("speaking");
+      speakingRef.current = true;
       const spoken = await api.voiceSpeak(pid, { text: spokenGreeting });
       if (sessionGenerationRef.current !== generation || !inCallRef.current) return;
-      await playBase64Audio(spoken.audioBase64, spoken.mimeType, playbackRef);
+
+      const outcome = await playBase64Audio(
+        spoken.audioBase64,
+        spoken.mimeType,
+        playbackRef,
+        () => {
+          speakingRef.current = true;
+        },
+      );
+      speakingRef.current = false;
 
       if (sessionGenerationRef.current !== generation || !inCallRef.current) return;
-      startListening(generation);
+      if (outcome === "interrupted") {
+        setPhase("listening");
+      } else {
+        setPhase("listening");
+        startListening(generation);
+      }
     } catch (e: unknown) {
       inCallRef.current = false;
       stopRecognition();
-      stopMeter();
+      stopMic();
       setConnected(false);
       setError(errMessage(e) || "Zəng başladılmadı");
       setPhase("error");
@@ -460,7 +605,8 @@ export default function TestCallPage() {
     mutedRef.current = next;
     if (next) {
       stopRecognition();
-    } else if (inCallRef.current && !processingRef.current) {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    } else if (inCallRef.current) {
       startListening(sessionGenerationRef.current);
     }
   }
@@ -468,7 +614,11 @@ export default function TestCallPage() {
   const live = connected && phase !== "error";
   const ringScale = 1 + level * 0.55;
   const speakingLabel =
-    phase === "speaking" ? `${operatorName} danışır…` : STATUS_LABELS[phase];
+    phase === "speaking"
+      ? `${operatorName} danışır…`
+      : interim
+        ? "Sizi eşidir…"
+        : STATUS_LABELS[phase];
 
   return (
     <div className="callai-page">
@@ -478,7 +628,9 @@ export default function TestCallPage() {
       <header className="callai-topbar">
         <div className="callai-brand-mark">AI Voice OS</div>
         <div className="callai-top-meta">
-          <span className="ok">{engineLabel === "edge_neural" ? "Neural AZ · hazır" : `${engineLabel} · hazır`}</span>
+          <span className="ok">
+            {engineLabel === "edge_neural" ? "Neural AZ · hazır" : `${engineLabel} · hazır`}
+          </span>
           <Link href={`/projects/${pid}`} className="callai-back">
             ← Layihə
           </Link>
@@ -490,8 +642,8 @@ export default function TestCallPage() {
           <p className="callai-brand-hero">CallAI</p>
           <h1>{businessLabel || projectName || "Operator xətti"}</h1>
           <p className="callai-lede">
-            {operatorName} ilə telefon kimi danışın — canlı səs, az gözləmə. Salam yalnız
-            peşəkar təqdimatdır; User Prompt səslənmir.
+            {operatorName} ilə telefon kimi danışın. Danışanda AI dərhal dayanır (barge-in).
+            Mikrofon Chrome/Edge-də açıq olmalıdır.
           </p>
 
           <div className="callai-cta-row">
@@ -525,9 +677,15 @@ export default function TestCallPage() {
             </div>
           </div>
           <p className="callai-status-line">{speakingLabel}</p>
-          <p className="callai-agent-name">
-            {operatorName} · {projectName || businessLabel || "AI Voice OS"}
-          </p>
+          {interim ? (
+            <p className="callai-agent-name" style={{ fontStyle: "italic", opacity: 0.85 }}>
+              «{interim}»
+            </p>
+          ) : (
+            <p className="callai-agent-name">
+              {operatorName} · {projectName || businessLabel || "AI Voice OS"}
+            </p>
+          )}
         </section>
       </main>
 
@@ -555,36 +713,20 @@ export default function TestCallPage() {
         <div className="callai-panel callai-tools-panel">
           <h2>Operator hərəkətləri</h2>
           <div className="callai-log">
-            {tools.length === 0 ? (
-              <p className="callai-empty">
-                Axtarış və data alətləri burada izlənir. Zəng zamanı bilik bazasından oxunur.
-              </p>
-            ) : (
-              tools.map((t) => (
-                <div key={t.id} className={`callai-tool-row ${t.status}`}>
-                  <div className="callai-tool-head">
-                    <strong>{labelTool(t.name)}</strong>
-                    <span>{t.status}</span>
-                  </div>
-                  {t.args && Object.keys(t.args).length > 0 ? (
-                    <pre>{JSON.stringify(t.args)}</pre>
-                  ) : null}
-                </div>
-              ))
-            )}
+            <p className="callai-empty">
+              Barge-in aktivdir: danışanda AI dayanır. İfadələr: «{BARGE_ACK[0]}»
+            </p>
           </div>
           <div className="callai-store-chip">
             <span>{projectName || "Layihə"}</span>
             <span>{businessLabel || "Operator xətti"}</span>
-            <span>{operatorName} · pulsuz neural AZ</span>
+            <span>{operatorName} · neural AZ · barge-in</span>
           </div>
         </div>
       </section>
 
       <footer className="callai-foot">
-        <p>
-          {projectName || "AI Voice OS"} · Azərbaycan dili · satış və operator xətti
-        </p>
+        <p>{projectName || "AI Voice OS"} · Azərbaycan dili · satış və operator xətti</p>
       </footer>
     </div>
   );

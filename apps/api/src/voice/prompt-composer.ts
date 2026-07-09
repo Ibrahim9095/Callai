@@ -58,8 +58,9 @@ ${user}
     ? `SALAMLAMA QƏTİ QAYDA:
 - Zəngin ilk səsli cümləsi artıq deyilib: «${first}»
 - User Prompt-u heç vaxt səslə oxuma.
-- Özünü yenidən «Salam, mən …yam, buyurun» ilə təqdim etmə — artıq salamlaşmısan.
-- Növbəti cavabın birbaşa müştərinin sualına olsun.`
+- Özünü yenidən «Salam…», «mən …yam», «buyurun» ilə təqdim etmə — artıq salamlaşmısan.
+- Növbəti cavabın birbaşa müştərinin sualına olsun. Yenidən adını demə.
+- Qısa cavab: 1–2 cümlə.`
     : "User Prompt-u heç vaxt səslə oxuma. Salamlama yalnız platformanın firstMessage-idir.";
 
   const fullPrompt = [
